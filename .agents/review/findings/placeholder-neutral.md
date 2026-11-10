@@ -2,7 +2,7 @@
 
 **Severity**: LOW - a grey example string in an empty box; it decides nothing. But it is this environment's own
 domain in shipped markup, which Invariant 7 forbids (no source file names an ADI domain as behaviour or default).
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master at 27f53db7 (2026-11-10) on guard proof (LOW, no review round); master gates green (9073 xUnit, 687 Pester, 19 warnings, format/diff-check/ASCII clean)
 **Branch**: `fix/p0-c-phase0-lows` (worktree `D:\source\ExchangeAdminWeb-wt\p0-c`, from master f151f527)
 **Commit**: 23d55c9a (the placeholder), c1a0ab07 (version) |
 **Implementer**: Claude (supervised agent)

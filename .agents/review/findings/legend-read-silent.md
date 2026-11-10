@@ -3,7 +3,7 @@
 **Severity**: LOW - the legend only adds choices and descriptions to Choice attributes; an attribute's own configured
 choices are still offered and nothing is written wrongly. But the choices the legend supplies vanished from the
 editor with no word on the page and no line in any log, so nobody could tell a broken store from an empty legend.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master at 27f53db7 (2026-11-10) on guard proof (LOW, no review round); master gates green (9073 xUnit, 687 Pester, 19 warnings, format/diff-check/ASCII clean)
 **Branch**: `fix/p0-c-phase0-lows` (worktree `D:\source\ExchangeAdminWeb-wt\p0-c`, from master f151f527)
 **Commit**: d942d1d1 (the log, the report, the page warning, tests, README), 97a49b6f (version) |
 **Implementer**: Claude (supervised agent)

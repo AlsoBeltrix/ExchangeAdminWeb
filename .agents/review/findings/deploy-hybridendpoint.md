@@ -3,7 +3,7 @@
 **Severity**: LOW - nothing depended on it. But an operator who passed `-HybridEndpoint` to a deploy was told
 nothing and got nothing: the value was read nowhere. The Migration endpoint is a module setting (`HybridEndpoint` in
 Module Configuration), which this parameter never reached.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master at 27f53db7 (2026-11-10) on guard proof (LOW, no review round); master gates green (9073 xUnit, 687 Pester, 19 warnings, format/diff-check/ASCII clean)
 **Branch**: `fix/p0-c-phase0-lows` (worktree `D:\source\ExchangeAdminWeb-wt\p0-c`, from master f151f527)
 **Commit**: d6be8b2b (the parameter removed, Pester test) |
 **Implementer**: Claude (supervised agent)

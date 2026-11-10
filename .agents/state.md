@@ -8,6 +8,26 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 ### 2026-11-07 00:25 - weekend run paused: two blockers only the owner can clear
+### 2026-11-10 - phase 0 fixes all on master (27f53db7); phase 1 (delete unwired code) starting
+
+Slices 0.6 and 0.7 merged at 27f53db7, not pushed, not deployed. Base 2.36.6. Master gates: 9073 xUnit, 687
+Pester, 19 warnings, format/diff-check/ASCII clean. All 13 audit defects plus the 0.3b follow-on are fixed on
+master. Phase 0 Gemini review (range 6758e796..27f53db7) is NOT yet run: the owner starts agy; wrapper line handed
+over, triage and resubmit when the result arrives.
+
+Owner's end-of-work dev check list so far (supervisor accepted each, his to overturn; dev checks per finding are in
+`.agents/review/findings/`): Graph Directory Read Credential must be set (0.1); a stopped Message Analysis export
+delivers nothing (0.3, assumption in decisions); Comms-10k and Conference Rooms completion notices still go out for
+a refused job (0.3b); `*` in a Group Management search is literal (0.4); a one-server fallback trace is audited
+Failed with the warning (0.5); Account Lockout refused execute mails for "not allowed", not for a missing ticket
+(0.6, assumption in decisions); Migration and Out of Office admin mail subjects now start `[Admin]` instead of
+`[Exchange Admin]`, which breaks any mailbox rule on the old prefix (0.7).
+
+Left for later slices or the owner: `ModuleConfig.razor:423` help names the Secret Server template "ADI - Azure App
+Registration" (environment name in shipped help; joins the open env-neutrality questions); Named Locations
+display-name box still binds on change; README "Ticket numbers" sentence about Account Lockout is stale; the old
+`EmailService` overload's "Migration Notification" branch is unreachable until slice 3.5 deletes the overload.
+
 ### 2026-11-10 - plan slices 0.3b, 0.4, 0.5 merged (4d2bf4cf); 0.6 and 0.7 close phase 0
 
 On master at 4d2bf4cf, not pushed, not deployed. Base 2.36.6. Master gates: 9045 xUnit, 19 warnings,

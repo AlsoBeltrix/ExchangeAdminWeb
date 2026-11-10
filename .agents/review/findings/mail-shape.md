@@ -4,7 +4,7 @@
 A migration batch was a "Target Mailbox", a count of users an "Affected User", the batch options a "Permission
 Type", and where there was nothing to say the rows read "N/A" and "Migration". Out of Office mail was headed
 "Permission Change Notification".
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master at 27f53db7 (2026-11-10) on guard proof (LOW, no review round); master gates green (9073 xUnit, 687 Pester, 19 warnings, format/diff-check/ASCII clean)
 **Branch**: `fix/p0-c-phase0-lows` (worktree `D:\source\ExchangeAdminWeb-wt\p0-c`, from master f151f527)
 **Commit**: 9e422005 (the nine mails, tests, README), c71ddc30 (versions) |
 **Implementer**: Claude (supervised agent)

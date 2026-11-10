@@ -3,7 +3,7 @@
 **Severity**: LOW - nothing wrong was written and no check was skipped: the check behind each button is unchanged.
 The operator typed a ticket, the button stayed grey until the box lost focus, and the first click on the button was
 spent on that blur instead of pressing it.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master at 27f53db7 (2026-11-10) on guard proof (LOW, no review round); master gates green (9073 xUnit, 687 Pester, 19 warnings, format/diff-check/ASCII clean)
 **Branch**: `fix/p0-c-phase0-lows` (worktree `D:\source\ExchangeAdminWeb-wt\p0-c`, from master f151f527)
 **Commit**: 91f7f3b5 (the five boxes, tests), 7b3edf69 (versions) |
 **Implementer**: Claude (supervised agent)
