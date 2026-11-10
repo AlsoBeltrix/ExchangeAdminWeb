@@ -5,6 +5,19 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-11-10 - ServiceNow ticket validation: possible later, required by nothing now
+
+The audit (`.agents/review/shared-and-unwired-audit-2026-11-10.md`, B1) found the 2026-08-31 decision (ServiceNow
+will be required, with a per-module switch) and the owner's 2026-11-09 words (no ServiceNow for the foreseeable
+future) pulling in different directions. Owner: "service now will come eventually, but I do not know when. we cannot
+write code that makes it impossible to add later, and we cannot write code that requires it now."
+
+Ruling, binding on the shared ticket piece and anything that touches tickets: (1) nothing may require ServiceNow to
+work today - a ticket is plain audit metadata, sanitized, with presence as the only rule (2026-11-09); (2) nothing may
+close the door - there is one place every ticket passes through before a write, where a validation step can be
+switched on later without editing each module. Amends 2026-08-31: "will be required" becomes "may be switched on
+later"; the per-module switch is not built out now and is not removed where it exists until the plan says how.
+
 ### 2026-11-10 - What several modules do the same way is one shared piece, not a copy per module
 
 Owner, after rev-j1 (Account Lockout was the one page whose hand-written ticket check had drifted from the other 22):
