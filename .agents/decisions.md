@@ -7,7 +7,8 @@ conversation history and should name superseded guidance when relevant.
 
 ### 2026-11-10 - A formerly synced user whose AD account is gone is cloud-only for protection
 
-Owner, on plan slice 0.1's stop item: "so a cloud user that is no longer on-prem is never going to be protected."
+Owner, on plan slice 0.1's stop item, after the two outcomes were laid out: "okay, proceed" (earlier: "so a cloud
+user that is no longer on-prem is never going to be protected.")
 Rule for the shared cloud-user check: when Graph reports the user is not synced but still carries an on-premises
 SID, bind by that SID. One account holds it: check that account. No account holds it: proceed on the cloud-only
 path, as before the slice. Lookup unavailable or ambiguous: refuse. A user Graph reports as synced whose SID no
