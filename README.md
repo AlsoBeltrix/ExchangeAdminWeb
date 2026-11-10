@@ -785,8 +785,9 @@ sign-in logs, and the answer says how far it can be trusted.
     only carries the mailbox's address is never the one checked. Empty until an admin fills it, with no fallback:
     while it is empty, or Graph cannot be read, every protection-checked change to a synced mailbox (Mailbox
     Permissions, Calendar Permissions, Out of Office, Conference Rooms) is refused as unavailable, and so is every
-    protection check of a synced recipient addressed by an alias Active Directory does not hold (Blocked Senders
-    included) - never re-resolved by its address, which another account could carry. Cloud-only mailboxes
+    protection check of a synced recipient Active Directory does not find by what was typed - an alias, or an account in
+    another domain of the forest, by any of its addresses (Blocked Senders included) - never re-resolved by its address,
+    which another account could carry. Cloud-only mailboxes
     do not need it; a synced mailbox Graph reports no SID for is checked by its address and logged ("bound by address")
   - **Entra users** - MFA Reset, Risky Users, Intune Devices (the device's primary user), Microsoft 365 group members
     and owners, Cloud Password Reset - are checked by the object id the write touches: Graph is asked for that user's
