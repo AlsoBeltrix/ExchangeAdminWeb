@@ -202,16 +202,16 @@ status `open`, `done <commit>`, or `declined <reason>`. Names are one line each;
 | #1b | A job that never ran a row (cancelled while queued, interrupted at start-up) delivers at completion with no check (slice 0.3b) | done, merged 4d2bf4cf |
 | #2 | On-prem message trace narrows to one server silently when the transport-server lookup fails | done, merged 4d2bf4cf |
 | #3 | Three AD `-Filter` strings built by quote-doubling | done, merged 4d2bf4cf |
-| #4 | Attribute legend read returns empty on any failure with no log | open |
-| #5 | Four ticket boxes (and the Migration email box) bind on change | open |
-| #6 | Migration and Out of Office admin mail uses the mailbox-permission template | open |
+| #4 | Attribute legend read returns empty on any failure with no log | done on branch d942d1d1 |
+| #5 | Four ticket boxes (and the Migration email box) bind on change | done on branch 91f7f3b5 |
+| #6 | Migration and Out of Office admin mail uses the mailbox-permission template | done on branch 9e422005 |
 | #7 | MFA Reset passes a null Entra object id to the protection check (bug 8) | done, merged adfb2a89 |
-| #8 | Environment address as a placeholder in MFA Reset | open |
-| #9 | `deploy.ps1 -HybridEndpoint` accepted and ignored | open |
+| #8 | Environment address as a placeholder in MFA Reset | done on branch 23d55c9a |
+| #9 | `deploy.ps1 -HybridEndpoint` accepted and ignored | done on branch d6be8b2b |
 | G1a | Synced out-of-domain user typed by its primary address is refused (fallback resolve binds by SID only for an alias) | done, merged 8b0fbb28 |
 | G1b | Synced out-of-domain user with no Exchange recipient: protection rules not applied by the cloud-user modules | done, merged adfb2a89 |
 | G2 | M365 Groups gate: blank identity and NotFound proceed unchecked; remove checks a string and deletes an id | done, merged adfb2a89 |
-| G3 | Account Lockout: cheap refusals after directory work; `Executed` means "asked to execute" | open |
+| G3 | Account Lockout: cheap refusals after directory work; `Executed` means "asked to execute" | done on branch d8aee0a6 |
 | A1 | `TicketNumberInput.razor` | open |
 | A2 | `AuthorizationCheck.razor` | open |
 | A3 | `"GroupPolicy"` authorization policy | open |
@@ -252,7 +252,7 @@ status `open`, `done <commit>`, or `declined <reason>`. Names are one line each;
 | A38 | `AdminEventLog.razor` unused `Config` inject | open |
 | A39 | `Home.razor` unused `AuthorizationService`, `Navigation` injects | open |
 | A40 | Legacy appsettings fallback keys (eight) | open |
-| A41 | `deploy.ps1 -HybridEndpoint` | open |
+| A41 | `deploy.ps1 -HybridEndpoint` | done on branch d6be8b2b (with #9) |
 | A42 | Unread PowerShell function parameters | open |
 | A43 | `ModulePermission.Name` | open |
 | A44 | `ConfigFieldType.AdUser` | open |

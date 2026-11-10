@@ -49,7 +49,7 @@
                 <div class="row g-3 mb-3">
                     <div class="col-md-4">
                         <label class="form-label">Email Address</label>
-                        <input type="email" class="form-control" @bind="singleEmail" placeholder="user@example.com" disabled="@isLoading" />
+                        <input type="email" class="form-control" @bind="singleEmail" @bind:event="oninput" placeholder="user@example.com" disabled="@isLoading" />
                     </div>
                     <div class="col-md-3">
                         <label class="form-label">Migration Direction</label>
@@ -60,7 +60,7 @@
                     </div>
                     <div class="col-md-3">
                         <label class="form-label">Ticket Number</label>
-                        <input type="text" class="form-control" @bind="singleTicketNumber" placeholder="INC0000000" disabled="@isLoading" required />
+                        <input type="text" class="form-control" @bind="singleTicketNumber" @bind:event="oninput" placeholder="INC0000000" disabled="@isLoading" required />
                     </div>
                 </div>
 
@@ -234,7 +234,7 @@
                     </div>
                     <div class="col-md-4">
                         <label class="form-label">Ticket Number</label>
-                        <input type="text" class="form-control" @bind="bulkTicketNumber" placeholder="INC0000000" disabled="@isLoading" required />
+                        <input type="text" class="form-control" @bind="bulkTicketNumber" @bind:event="oninput" placeholder="INC0000000" disabled="@isLoading" required />
                     </div>
                 </div>
 
@@ -1963,14 +1963,14 @@
 
     private async Task CheckSingleEligibility()
     {
-        // kd-72. A second click while the page is busy is ignored, not run beside it: Check is disabled on IsBusy,
+        // A second click while the page is busy is ignored, not run beside it: Check is disabled on IsBusy,
         // but the browser's copy of that is one round trip stale.
         if (IsBusy)
             return;
         if (string.IsNullOrWhiteSpace(singleEmail))
             return;
 
-        // kd-72. What this check asks about and records, read once, above the yield below. The address, direction
+        // What this check asks about and records, read once, above the yield below. The address, direction
         // and ticket were read after it - into the check, its audit row, the notice and the catch - and their
         // controls reach the browser's disabled state a round trip late.
         var email = singleEmail;
@@ -1985,7 +1985,7 @@
             "Exchange Migration", "Checking eligibility", ActivitySize.Unknown);
 
         await Task.Yield();
-        string? checkFailure = null; // aud-a23i: why the check reached no answer, for its activity; an answer, either way, is a check that succeeded
+        string? checkFailure = null; // why the check reached no answer, for its activity; an answer, either way, is a check that succeeded
         try
         {
             singleResult = await MigrationSvc.CheckMigrationEligibilityAsync(email.Trim(), direction);
@@ -2002,25 +2002,25 @@
             }
             try { Audit.LogMigrationCheck(currentUser, ipAddress, email, singleResult.Status.ToString(),
                 ticket, checkDetail); }
-            catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for the Migration eligibility check of {Email}", email); } // aud-a23m: the audit is its own step - a throw from it reached the check's catch and replaced the verdict
+            catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for the Migration eligibility check of {Email}", email); } // the audit is its own step
 
             try { await Email.SendAdminNotificationAsync(
-                currentUser, ipAddress, $"CheckMigrationEligibility_{direction}", email, "N/A",
-                singleResult.Status.ToString(), singleResult.Status == MigrationStatus.Eligible, ticket,
-                checkDetail); }
-            catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "Failed to send admin notification for the Migration eligibility check of {Email}", email); } // aud-a23m: so is the notification (Constitution: its failure must not change or mask the result)
+                currentUser, ipAddress, $"CheckMigrationEligibility_{direction}",
+                singleResult.Status == MigrationStatus.Eligible, ticket,
+                new Dictionary<string, string> { ["Mailbox"] = email, ["Eligibility"] = singleResult.Status.ToString() }, checkDetail); }
+            catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "Failed to send admin notification for the Migration eligibility check of {Email}", email); } // so is the notification (Constitution: its failure must not change or mask the result)
         }
         catch (Exception ex)
         {
             singleResult = new MigrationEligibilityResult
             {
                 EmailAddress = email,
-                Status = MigrationStatus.Undetermined // aud-a23h: a throw before the service returned is no verdict either
+                Status = MigrationStatus.Undetermined // a throw before the service returned is no verdict either
             };
-            singleResult.IneligibilityReasons.Add($"Could not be determined: {ExchangeServiceBase.ResolveFailure(ex).primary}"); // kd-34: the error's own words (aud-a23i's helper) - a sign-in that fails under Stop arrives as PowerShell's Stop exception, "The running command stopped because ..." in front
+            singleResult.IneligibilityReasons.Add($"Could not be determined: {ExchangeServiceBase.ResolveFailure(ex).primary}"); // the error's own words - a sign-in that fails under Stop arrives as PowerShell's Stop exception, "The running command stopped because ..." in front
             checkFailure = $"Could not be determined: {ExchangeServiceBase.ResolveFailure(ex).primary}";
             try { Audit.LogMigrationCheck(currentUser, clientIpAddress, email.Trim(),
-                "Error", ticket, ExchangeServiceBase.ResolveFailure(ex).primary); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for the Migration eligibility check of {Email}", email); } // aud-a23m: the catch's own audit guarded too, so nothing escapes the handler
+                "Error", ticket, ExchangeServiceBase.ResolveFailure(ex).primary); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for the Migration eligibility check of {Email}", email); } // the catch's own audit guarded too, so nothing escapes the handler
         }
         finally
         {
@@ -2031,12 +2031,12 @@
 
     private async Task CreateSingleMigrationBatch()
     {
-        // kd-72. A second click while the page is busy is ignored, not run beside it: Create is disabled on IsBusy,
+        // A second click while the page is busy is ignored, not run beside it: Create is disabled on IsBusy,
         // but the browser's copy of that is one round trip stale.
         if (IsBusy)
             return;
 
-        // kd-72. What this create writes and records, read once, above the first await. The direction, ticket,
+        // What this create writes and records, read once, above the first await. The direction, ticket,
         // batch name and auto-start and auto-complete choices were read after the authorization re-check and the
         // yield - into the batch, its audit rows and the notice - and the direction select and the ticket box are
         // not disabled while a create runs, so a change landing there created a batch nobody submitted.
@@ -2055,15 +2055,15 @@
 
         using var activity = Progress.Begin(
             "Exchange Migration", "Creating the migration batch", ActivitySize.Unknown);
-        string? createFailure = "Nothing was created."; // aud-a23m: the create's outcome for its activity, which completed true on every path
+        string? createFailure = "Nothing was created."; // the create's outcome for its activity
 
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationCreate")).Succeeded)
-                { singleCreateResult = PermissionResult.Fail(createFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, $"CreateMigrationBatch_{direction}", "create a migration batch", singleResult?.EmailAddress ?? "(no eligibility check)", ticket, "MigrationCreate")); return; } // aud-a23q: a denial is shown, audited as the bulk executors' "_Denied" row (RecordDenial), and ends the activity with its text; it returned in silence
+                { singleCreateResult = PermissionResult.Fail(createFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, $"CreateMigrationBatch_{direction}", "create a migration batch", singleResult?.EmailAddress ?? "(no eligibility check)", ticket, "MigrationCreate")); return; } // a denial is shown, audited as the bulk executors' "_Denied" row (RecordDenial), and ends the activity with its text
 
-            if (MigrationService.RefusesSingleCreate(singleResult, ticket, out var singleRefusal)) // aud-a23q: a guard return says why nothing was created; it said nothing
+            if (MigrationService.RefusesSingleCreate(singleResult, ticket, out var singleRefusal)) // a guard return says why nothing was created
                 { singleCreateResult = PermissionResult.Fail(createFailure = singleRefusal); return; }
 
             await Task.Yield();
@@ -2074,7 +2074,7 @@
 
             singleCreateResult = await MigrationSvc.CreateMigrationBatchAsync(
                 direction, new List<string> { singleResult.EmailAddress }, finalBatchName, autoStart, autoComplete, authState.User);
-            createFailure = singleCreateResult.Success ? null : singleCreateResult.Message; // aud-a23m: set where the outcome is known, so no later await can change it
+            createFailure = singleCreateResult.Success ? null : singleCreateResult.Message; // set where the outcome is known, so no later await can change it
             var ipAddress = clientIpAddress;
             var singleExcluded = singleCreateResult.ExcludedTargets ?? Array.Empty<string>();
             var singleCreatedCount = 1 - singleExcluded.Count;
@@ -2092,7 +2092,7 @@
                 {
                     Audit.LogMigrationAction(currentUser, ipAddress,
                         $"CreateMigrationBatch_{direction}_ProtectedExclusion", excluded,
-                        false, ticket, singleCreateResult.UnverifiedTargets?.Contains(excluded) == true ? "Excluded - could not be verified as unprotected, not migrated" : "Excluded — protected principal, not migrated"); // aud-a23p: an entry whose protection check did not answer is filed as such, not as a protected principal
+                        false, ticket, singleCreateResult.UnverifiedTargets?.Contains(excluded) == true ? "Excluded - could not be verified as unprotected, not migrated" : "Excluded — protected principal, not migrated"); // an entry whose protection check did not answer is filed as such, not as a protected principal
                 }
             }
             catch (Exception ex)
@@ -2101,17 +2101,17 @@
             }
 
             var singleExclusionNote = singleExcluded.Count > 0
-                ? $" | EXCLUDED (not migrated): {MigrationService.ExclusionSummary(singleExcluded, singleCreateResult.UnverifiedTargets)} {string.Join("; ", singleExcluded)}" // aud-a23p: each kind of exclusion counted apart
+                ? $" | EXCLUDED (not migrated): {MigrationService.ExclusionSummary(singleExcluded, singleCreateResult.UnverifiedTargets)} {string.Join("; ", singleExcluded)}" // each kind of exclusion counted apart
                 : "";
             try { await Email.SendAdminNotificationAsync(
-                currentUser, ipAddress, $"CreateMigrationBatch_{direction}", finalBatchName,
-                singleResult.EmailAddress, $"AutoStart:{autoStart} AutoComplete:{autoComplete}{singleExclusionNote}",
-                singleCreateResult.Success, ticket, singleCreateResult.Success ? null : singleCreateResult.Message); }
-            catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "Failed to send admin notification for CreateMigrationBatch_{Direction} on {Batch}", direction, finalBatchName); } // aud-a23m: a notification that threw reached the catch below and replaced the created batch's result
+                currentUser, ipAddress, $"CreateMigrationBatch_{direction}", singleCreateResult.Success, ticket,
+                new Dictionary<string, string> { ["Batch"] = finalBatchName, ["Mailbox"] = singleResult.EmailAddress, ["Options"] = $"AutoStart:{autoStart} AutoComplete:{autoComplete}{singleExclusionNote}" },
+                singleCreateResult.Success ? null : singleCreateResult.Message); }
+            catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "Failed to send admin notification for CreateMigrationBatch_{Direction} on {Batch}", direction, finalBatchName); } // a notification that throws must not reach the catch below and replace the created batch's result
         }
         catch (Exception ex)
         {
-            singleCreateResult = PermissionResult.Fail(createFailure = ExchangeServiceBase.ResolveFailure(ex).primary); // kd-34: the error's own words (aud-a23i's helper), not PowerShell's Stop prefix
+            singleCreateResult = PermissionResult.Fail(createFailure = ExchangeServiceBase.ResolveFailure(ex).primary); // the error's own words, not PowerShell's Stop prefix
         }
         finally
         {
@@ -2130,13 +2130,13 @@
 
     private async Task CheckBulkEligibility()
     {
-        // kd-72. A second click while the page is busy is ignored, as in CheckSingleEligibility.
+        // A second click while the page is busy is ignored, as in CheckSingleEligibility.
         if (IsBusy)
             return;
         if (csvFile == null)
             return;
 
-        // kd-72. What this check reads and records, read once, above the yield below: the file, the direction
+        // What this check reads and records, read once, above the yield below: the file, the direction
         // and the ticket were read after it, into the check, its audit rows and the notice.
         var file = csvFile;
         var direction = migrationDirection;
@@ -2150,7 +2150,7 @@
             "Exchange Migration", "Checking bulk eligibility", ActivitySize.Unknown);
 
         await Task.Yield();
-        string? bulkFailure = null; // aud-a23i: why the run failed, or how many rows reached no answer, for its activity
+        string? bulkFailure = null; // why the run failed, or how many rows reached no answer, for its activity
         try
         {
             await using var stream = file.OpenReadStream(maxAllowedSize: 5 * 1024 * 1024);
@@ -2169,8 +2169,8 @@
             try
             {
                 await Email.SendAdminNotificationAsync(
-                    currentUser, ipAddress, $"BulkMigrationEligibilityCheck_{direction}", "Bulk Operation", file.Name,
-                    $"{bulkResult.EligibleUsers}/{bulkResult.TotalUsers} eligible", true, ticket, null);
+                    currentUser, ipAddress, $"BulkMigrationEligibilityCheck_{direction}", true, ticket,
+                    new Dictionary<string, string> { ["CSV File"] = file.Name, ["Eligible"] = $"{bulkResult.EligibleUsers}/{bulkResult.TotalUsers} eligible" });
             }
             catch (Exception ex)
             {
@@ -2183,7 +2183,7 @@
             {
                 BatchName = "Error",
                 Success = false,
-                Message = ExchangeServiceBase.ResolveFailure(ex).primary, // kd-34: the error's own words (aud-a23i's helper), not PowerShell's Stop prefix
+                Message = ExchangeServiceBase.ResolveFailure(ex).primary, // the error's own words, not PowerShell's Stop prefix
                 Direction = direction
             };
             bulkFailure = $"The bulk eligibility check failed: {ExchangeServiceBase.ResolveFailure(ex).primary}";
@@ -2199,11 +2199,11 @@
 
     private async Task CreateMigrationBatch()
     {
-        // kd-72. A second click while the page is busy is ignored, as in CreateSingleMigrationBatch.
+        // A second click while the page is busy is ignored, as in CreateSingleMigrationBatch.
         if (IsBusy)
             return;
 
-        // kd-72. What this create writes and records, read once, above the first await, as in
+        // What this create writes and records, read once, above the first await, as in
         // CreateSingleMigrationBatch: the direction select and the ticket box are not disabled while a create runs.
         var direction = migrationDirection;
         var ticket = TicketPresence.Sanitize(bulkTicketNumber);
@@ -2217,15 +2217,15 @@
 
         using var activity = Progress.Begin(
             "Exchange Migration", "Creating the migration batch", ActivitySize.Unknown);
-        string? createFailure = "Nothing was created."; // aud-a23m: the create's outcome for its activity, which completed true on every path
+        string? createFailure = "Nothing was created."; // the create's outcome for its activity
 
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationCreate")).Succeeded)
-                { createResult = PermissionResult.Fail(createFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, $"CreateMigrationBatch_{direction}", "create a migration batch", string.IsNullOrWhiteSpace(batchName) ? "(bulk batch)" : batchName.Trim(), ticket, "MigrationCreate")); return; } // aud-a23q: a denial is shown, audited as the bulk executors' "_Denied" row (RecordDenial), and ends the activity with its text; it returned in silence
+                { createResult = PermissionResult.Fail(createFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, $"CreateMigrationBatch_{direction}", "create a migration batch", string.IsNullOrWhiteSpace(batchName) ? "(bulk batch)" : batchName.Trim(), ticket, "MigrationCreate")); return; } // a denial is shown, audited as the bulk executors' "_Denied" row (RecordDenial), and ends the activity with its text
 
-            if (MigrationService.RefusesBulkCreate(bulkResult, ticket, out var bulkRefusal)) // aud-a23q: a guard return says why nothing was created; it said nothing
+            if (MigrationService.RefusesBulkCreate(bulkResult, ticket, out var bulkRefusal)) // a guard return says why nothing was created
                 { createResult = PermissionResult.Fail(createFailure = bulkRefusal); return; }
 
             await Task.Yield();
@@ -2241,7 +2241,7 @@
 
             createResult = await MigrationSvc.CreateMigrationBatchAsync(
                 direction, eligibleEmails, finalBatchName, autoStart, autoComplete, authState.User);
-            createFailure = createResult.Success ? null : createResult.Message; // aud-a23m: the same
+            createFailure = createResult.Success ? null : createResult.Message; // the same
             var ipAddress = clientIpAddress;
             var bulkExcluded = createResult.ExcludedTargets ?? Array.Empty<string>();
             var createdCount = eligibleEmails.Count - bulkExcluded.Count;
@@ -2259,7 +2259,7 @@
                 {
                     Audit.LogMigrationAction(currentUser, ipAddress,
                         $"CreateMigrationBatch_{direction}_ProtectedExclusion", excluded,
-                        false, ticket, createResult.UnverifiedTargets?.Contains(excluded) == true ? "Excluded - could not be verified as unprotected, not migrated" : "Excluded — protected principal, not migrated"); // aud-a23p: an entry whose protection check did not answer is filed as such, not as a protected principal
+                        false, ticket, createResult.UnverifiedTargets?.Contains(excluded) == true ? "Excluded - could not be verified as unprotected, not migrated" : "Excluded — protected principal, not migrated"); // an entry whose protection check did not answer is filed as such, not as a protected principal
                 }
             }
             catch (Exception ex)
@@ -2268,17 +2268,17 @@
             }
 
             var bulkExclusionNote = bulkExcluded.Count > 0
-                ? $" | EXCLUDED (not migrated): {MigrationService.ExclusionSummary(bulkExcluded, createResult.UnverifiedTargets)} {string.Join("; ", bulkExcluded)}" // aud-a23p: each kind of exclusion counted apart
+                ? $" | EXCLUDED (not migrated): {MigrationService.ExclusionSummary(bulkExcluded, createResult.UnverifiedTargets)} {string.Join("; ", bulkExcluded)}" // each kind of exclusion counted apart
                 : "";
             try { await Email.SendAdminNotificationAsync(
-                currentUser, ipAddress, $"CreateMigrationBatch_{direction}", finalBatchName,
-                $"{createdCount} users", $"AutoStart:{autoStart} AutoComplete:{autoComplete}{bulkExclusionNote}",
-                createResult.Success, ticket, createResult.Success ? null : createResult.Message); }
-            catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "Failed to send admin notification for CreateMigrationBatch_{Direction} on {Batch}", direction, finalBatchName); } // aud-a23m: the same for the bulk create
+                currentUser, ipAddress, $"CreateMigrationBatch_{direction}", createResult.Success, ticket,
+                new Dictionary<string, string> { ["Batch"] = finalBatchName, ["Mailboxes"] = $"{createdCount} users", ["Options"] = $"AutoStart:{autoStart} AutoComplete:{autoComplete}{bulkExclusionNote}" },
+                createResult.Success ? null : createResult.Message); }
+            catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "Failed to send admin notification for CreateMigrationBatch_{Direction} on {Batch}", direction, finalBatchName); } // the same for the bulk create
         }
         catch (Exception ex)
         {
-            createResult = PermissionResult.Fail(createFailure = ExchangeServiceBase.ResolveFailure(ex).primary); // kd-34: the error's own words (aud-a23i's helper), not PowerShell's Stop prefix
+            createResult = PermissionResult.Fail(createFailure = ExchangeServiceBase.ResolveFailure(ex).primary); // the error's own words, not PowerShell's Stop prefix
         }
         finally
         {
@@ -3385,16 +3385,16 @@
 
         using var activity = Progress.Begin(
             "Exchange Migration", $"{auditAction} on {target}", ActivitySize.Unknown);
-        string? actionFailure = "Nothing was done."; // aud-a23m: the write's outcome for its activity, which completed true on every path
+        string? actionFailure = "Nothing was done."; // the write's outcome for its activity
         try
         {
-            if (await TicketRefusalAsync(auditAction, target, ticket) is { } ticketRefused) { batchActionResult = PermissionResult.Fail(actionFailure = ticketRefused); return; } // sweep item 41
+            if (await TicketRefusalAsync(auditAction, target, ticket) is { } ticketRefused) { batchActionResult = PermissionResult.Fail(actionFailure = ticketRefused); return; }
 
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
-                { batchActionResult = PermissionResult.Fail(actionFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, $"{auditAction} on {target}", target, ticket, "MigrationManage")); return; } // aud-a23q: a denial is shown, audited as the bulk executors' "_Denied" row (RecordDenial), and ends the activity with its text; it returned in silence
+                { batchActionResult = PermissionResult.Fail(actionFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, $"{auditAction} on {target}", target, ticket, "MigrationManage")); return; } // a denial is shown, audited as the bulk executors' "_Denied" row (RecordDenial), and ends the activity with its text
 
-            var result = await AuditedIfItThrows(() => action(), auditAction, target, ticket); // kd-33: a throw is audited too
+            var result = await AuditedIfItThrows(() => action(), auditAction, target, ticket); // a throw is audited too
             batchActionResult = result;
             actionFailure = result.Success ? null : result.Message;
             try
@@ -3409,8 +3409,8 @@
             try
             {
                 await Email.SendAdminNotificationAsync(
-                    currentUser, clientIpAddress, $"Migration_{auditAction}", target, "N/A",
-                    "Migration", result.Success, ticket, result.Success ? null : result.Message);
+                    currentUser, clientIpAddress, $"Migration_{auditAction}", result.Success, ticket,
+                    new Dictionary<string, string> { ["Batch"] = target }, result.Success ? null : result.Message);
             }
             catch (Exception ex)
             {
@@ -3426,7 +3426,7 @@
         }
         catch (Exception ex)
         {
-            batchActionResult = PermissionResult.Fail(actionFailure = ExchangeServiceBase.ResolveFailure(ex).primary); // kd-34: the error's own words (aud-a23i's helper), not PowerShell's Stop prefix
+            batchActionResult = PermissionResult.Fail(actionFailure = ExchangeServiceBase.ResolveFailure(ex).primary); // the error's own words, not PowerShell's Stop prefix
         }
         finally
         {
@@ -3441,8 +3441,8 @@
         actionInProgress = target;
         batchActionResult = null;
 
-        // Review of A31: the batch this action belongs to, captured before any await. Reading
-        // expandedBatch after them was wrong the same way aud-a7 was. Authorization, the action
+        // The batch this action belongs to, captured before any await. Reading
+        // expandedBatch after them would be wrong. Authorization, the action
         // and the notification all await, and a URL navigation or selection change in that
         // window moves expandedBatch - so an action started on A could finish by discarding B's
         // reports and leaving A's stale ones in place. A null check only proves some batch is
@@ -3451,16 +3451,16 @@
 
         using var activity = Progress.Begin(
             "Exchange Migration", $"{auditAction} on {target}", ActivitySize.Unknown);
-        string? actionFailure = "Nothing was done."; // aud-a23m: the write's outcome for its activity, which completed true on every path
+        string? actionFailure = "Nothing was done."; // the write's outcome for its activity
         try
         {
-            if (await TicketRefusalAsync(auditAction, target, ticket) is { } ticketRefused) { batchActionResult = PermissionResult.Fail(actionFailure = ticketRefused); return; } // sweep item 41
+            if (await TicketRefusalAsync(auditAction, target, ticket) is { } ticketRefused) { batchActionResult = PermissionResult.Fail(actionFailure = ticketRefused); return; }
 
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
-                { batchActionResult = PermissionResult.Fail(actionFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, $"{auditAction} on {target}", target, ticket, "MigrationManage")); return; } // aud-a23q: a denial is shown, audited as the bulk executors' "_Denied" row (RecordDenial), and ends the activity with its text; it returned in silence
+                { batchActionResult = PermissionResult.Fail(actionFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, $"{auditAction} on {target}", target, ticket, "MigrationManage")); return; } // a denial is shown, audited as the bulk executors' "_Denied" row (RecordDenial), and ends the activity with its text
 
-            var result = await AuditedIfItThrows(() => action(), auditAction, target, ticket); // kd-33: a throw is audited too
+            var result = await AuditedIfItThrows(() => action(), auditAction, target, ticket); // a throw is audited too
             batchActionResult = result;
             actionFailure = result.Success ? null : result.Message;
             try
@@ -3475,8 +3475,8 @@
             try
             {
                 await Email.SendAdminNotificationAsync(
-                    currentUser, clientIpAddress, $"Migration_{auditAction}", target, "N/A",
-                    "Migration", result.Success, ticket, result.Success ? null : result.Message);
+                    currentUser, clientIpAddress, $"Migration_{auditAction}", result.Success, ticket,
+                    new Dictionary<string, string> { ["Mailbox"] = target }, result.Success ? null : result.Message);
             }
             catch (Exception ex)
             {
@@ -3491,7 +3491,7 @@
         }
         catch (Exception ex)
         {
-            batchActionResult = PermissionResult.Fail(actionFailure = ExchangeServiceBase.ResolveFailure(ex).primary); // kd-34: the error's own words (aud-a23i's helper), not PowerShell's Stop prefix
+            batchActionResult = PermissionResult.Fail(actionFailure = ExchangeServiceBase.ResolveFailure(ex).primary); // the error's own words, not PowerShell's Stop prefix
         }
         finally
         {
@@ -3643,23 +3643,23 @@
     {
         // Set before the first await - see CreateSingleMigrationBatch for why. The guards moved
         // inside the try so the existing finally clears both flags on every early return.
-        var running = $"{auditAction} on {batchNames.Count} batch(es)"; actionInProgress = bulkBatchActivity = running; // aud-a68: named from its action, as a single action's activity is; the busy reason was "clearing" and the label "Removing completed batches" whichever of the six ran
+        var running = $"{auditAction} on {batchNames.Count} batch(es)"; actionInProgress = bulkBatchActivity = running; // named from its action, as a single action's activity is
         isLoadingStatus = true;
         batchActionResult = null;
 
         using var activity = Progress.Begin(
             "Exchange Migration", running, ActivitySize.Unknown);
-        string? bulkFailure = "Nothing was done."; // aud-a23m: the run's outcome for its activity - "Nothing to do" is a success (D2(a)), any refused row a failure
+        string? bulkFailure = "Nothing was done."; // the run's outcome for its activity - "Nothing to do" is a success (D2(a)), any refused row a failure
 
         try
         {
-            if (await TicketRefusalAsync(auditAction, $"{batchNames.Count} batch(es)", ticket, batchNames) is { } ticketRefused) { batchActionResult = PermissionResult.Fail(bulkFailure = ticketRefused); return; } // sweep item 41
+            if (await TicketRefusalAsync(auditAction, $"{batchNames.Count} batch(es)", ticket, batchNames) is { } ticketRefused) { batchActionResult = PermissionResult.Fail(bulkFailure = ticketRefused); return; }
 
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
-                { batchActionResult = PermissionResult.Fail(bulkFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, running, $"{batchNames.Count} batch(es)", ticket, "MigrationManage", batchNames)); return; } // aud-a68: through RecordDenial, as the single actions' and the creates' denials are - the same "_Denied" row, now with mutationAttempted false - and the run named in the banner and the activity, which said "Authorization denied." kd-17: its target is what the run would have acted on, the confirm bar's "N batch(es)" with the names in targets, where it was the notification action
+                { batchActionResult = PermissionResult.Fail(bulkFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, running, $"{batchNames.Count} batch(es)", ticket, "MigrationManage", batchNames)); return; } // through RecordDenial, as the single actions' and the creates' denials are - the same "_Denied" row, with mutationAttempted false - and the run named in the banner and the activity, which said "Authorization denied." Its target is what the run would have acted on, the confirm bar's "N batch(es)" with the names in targets, where it was the notification action
 
-            if (MigrationService.RefusesWithNoListLoaded(migrationBatches, "migration batch", out var noBatchList)) { batchActionResult = PermissionResult.Fail(bulkFailure = noBatchList); return; } // aud-a55: the guard says why nothing was done, in the banner and the activity; it returned in silence. Not audited: nothing was attempted
+            if (MigrationService.RefusesWithNoListLoaded(migrationBatches, "migration batch", out var noBatchList)) { batchActionResult = PermissionResult.Fail(bulkFailure = noBatchList); return; } // the guard says why nothing was done, in the banner and the activity. Not audited: nothing was attempted
 
             // The skipped rows are annotated before the early return, so "nothing to do" still
             // explains itself on the rows rather than in the banner.
@@ -3688,7 +3688,7 @@
             var auditWarnings = new List<string>();
             foreach (var batchName in batchNames)
             {
-                var result = await AuditedIfItThrows(() => action(batchName), auditAction, batchName, ticket); // kd-33: the same, for the batch in flight
+                var result = await AuditedIfItThrows(() => action(batchName), auditAction, batchName, ticket); // the same, for the batch in flight
                 try
                 {
                     Audit.LogMigrationAction(currentUser, clientIpAddress, auditAction, batchName,
@@ -3709,7 +3709,7 @@
                 {
                     errors.Add($"{batchName}: {result.Message}");
 
-                    // R25: the reason lands ON THE ROW, not in the banner. The operator sees
+                    // The reason lands ON THE ROW, not in the banner. The operator sees
                     // which batch refused and why by looking at it, instead of matching names
                     // out of a semicolon-joined list.
                     actionOutcomes[batchName] = result.Message ?? "Refused";
@@ -3739,7 +3739,7 @@
             foreach (var name in accepted)
                 ReportStore.DeleteForBatch(name);
 
-            // R25. ONE GLANCEABLE LINE. Counts only - which batch refused and why is written on
+            // ONE GLANCEABLE LINE. Counts only - which batch refused and why is written on
             // that batch's row. The audit warnings are logged rather than appended: an audit
             // failure is real but it is not what the operator is deciding about in this second,
             // and it used to arrive as a parenthetical after an already-overlong sentence.
@@ -3759,9 +3759,9 @@
             try
             {
                 await Email.SendAdminNotificationAsync(
-                    currentUser, clientIpAddress, notificationAction,
-                    $"{succeeded} batch(es)", "N/A", "Migration",
-                    errors.Count == 0, ticket, errors.Any() ? string.Join("; ", errors) : null);
+                    currentUser, clientIpAddress, notificationAction, errors.Count == 0, ticket,
+                    new Dictionary<string, string> { ["Succeeded"] = $"{succeeded} batch(es)" },
+                    errors.Any() ? string.Join("; ", errors) : null);
             }
             catch (Exception ex)
             {
@@ -3774,7 +3774,7 @@
         }
         catch (Exception ex)
         {
-            batchActionResult = PermissionResult.Fail(bulkFailure = ExchangeServiceBase.ResolveFailure(ex).primary); // kd-15: the error's own words - a sign-in that fails mid-run arrives here as PowerShell's Stop exception, "The running command stopped because ..." in front
+            batchActionResult = PermissionResult.Fail(bulkFailure = ExchangeServiceBase.ResolveFailure(ex).primary); // the error's own words - a sign-in that fails mid-run arrives here as PowerShell's Stop exception, "The running command stopped because ..." in front
         }
         finally
         {
@@ -3785,7 +3785,7 @@
     }
 
     // The mailbox twin of ExecuteBulkBatchAction, and deliberately the same shape rather than a
-    // shared generic: R12 says both bars behave identically, and every rule below is one this page
+    // shared generic: both bars behave identically, and every rule below is one this page
     // learned the hard way, so they are restated where they apply rather than abstracted into a
     // place where a later change to one silently changes the other.
     //
@@ -3806,17 +3806,17 @@
 
         using var activity = Progress.Begin(
             "Exchange Migration", "Applying the bulk mailbox action", ActivitySize.Unknown);
-        string? bulkFailure = "Nothing was done."; // aud-a23m: the run's outcome for its activity - "Nothing to do" is a success (D2(a)), any refused row a failure
+        string? bulkFailure = "Nothing was done."; // the run's outcome for its activity - "Nothing to do" is a success (D2(a)), any refused row a failure
 
         try
         {
-            if (await TicketRefusalAsync(auditAction, $"{plan.Eligible.Count} mailbox(es)", ticket, plan.Eligible) is { } ticketRefused) { batchActionResult = PermissionResult.Fail(bulkFailure = ticketRefused); return; } // sweep item 41
+            if (await TicketRefusalAsync(auditAction, $"{plan.Eligible.Count} mailbox(es)", ticket, plan.Eligible) is { } ticketRefused) { batchActionResult = PermissionResult.Fail(bulkFailure = ticketRefused); return; }
 
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
-                { batchActionResult = PermissionResult.Fail(bulkFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, $"{auditAction} on {plan.Eligible.Count} mailbox(es)", $"{plan.Eligible.Count} mailbox(es)", ticket, "MigrationManage", plan.Eligible)); return; } // aud-a68: the same, for the mailbox run; kd-17: and the same target, "N mailbox(es)" with the addresses in targets
+                { batchActionResult = PermissionResult.Fail(bulkFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, $"{auditAction} on {plan.Eligible.Count} mailbox(es)", $"{plan.Eligible.Count} mailbox(es)", ticket, "MigrationManage", plan.Eligible)); return; } // the same, for the mailbox run; and the same target, "N mailbox(es)" with the addresses in targets
 
-            if (MigrationService.RefusesWithNoListLoaded(batchUsers, "mailbox", out var noMailboxList)) { batchActionResult = PermissionResult.Fail(bulkFailure = noMailboxList); return; } // aud-a55: the guard says why nothing was done, in the banner and the activity; it returned in silence. Not audited: nothing was attempted
+            if (MigrationService.RefusesWithNoListLoaded(batchUsers, "mailbox", out var noMailboxList)) { batchActionResult = PermissionResult.Fail(bulkFailure = noMailboxList); return; } // the guard says why nothing was done, in the banner and the activity. Not audited: nothing was attempted
 
             foreach (var earlySkip in plan.Skipped)
                 actionOutcomes[earlySkip.EmailAddress] = $"Skipped ({earlySkip.Status})";
@@ -3839,7 +3839,7 @@
 
             foreach (var email in plan.Eligible)
             {
-                var result = await AuditedIfItThrows(() => action(email), auditAction, email, ticket); // kd-33: the same, for the mailbox in flight
+                var result = await AuditedIfItThrows(() => action(email), auditAction, email, ticket); // the same, for the mailbox in flight
                 try
                 {
                     Audit.LogMigrationAction(currentUser, clientIpAddress, auditAction, email,
@@ -3874,7 +3874,7 @@
             foreach (var email in accepted)
                 selectedMailboxes.Remove(email);
 
-            // R25, same as the batch executor: counts in the banner, detail on the rows.
+            // Same as the batch executor: counts in the banner, detail on the rows.
             foreach (var warning in auditWarnings)
                 Logger.LogWarning("Audit warning during {Action}: {Detail}", auditAction, warning);
 
@@ -3892,16 +3892,16 @@
             try
             {
                 await Email.SendAdminNotificationAsync(
-                    currentUser, clientIpAddress, notificationAction,
-                    $"{succeeded} mailbox(es)", "N/A", "Migration",
-                    errors.Count == 0, ticket, errors.Any() ? string.Join("; ", errors) : null);
+                    currentUser, clientIpAddress, notificationAction, errors.Count == 0, ticket,
+                    new Dictionary<string, string> { ["Succeeded"] = $"{succeeded} mailbox(es)" },
+                    errors.Any() ? string.Join("; ", errors) : null);
             }
             catch (Exception ex)
             {
                 Logger.LogWarning(ex, "Failed to send admin notification for {Action}", notificationAction);
             }
 
-            // Refresh THIS pane only (R30). The catalogue has not changed - these actions move
+            // Refresh THIS pane only. The catalogue has not changed - these actions move
             // mailboxes inside one batch - so reloading it would be the batch pane silently doing
             // the mailbox pane's work.
             var savedResult = batchActionResult;
@@ -3913,7 +3913,7 @@
         }
         catch (Exception ex)
         {
-            batchActionResult = PermissionResult.Fail(bulkFailure = ExchangeServiceBase.ResolveFailure(ex).primary); // kd-15: the same, for the mailbox run
+            batchActionResult = PermissionResult.Fail(bulkFailure = ExchangeServiceBase.ResolveFailure(ex).primary); // the same, for the mailbox run
         }
         finally
         {

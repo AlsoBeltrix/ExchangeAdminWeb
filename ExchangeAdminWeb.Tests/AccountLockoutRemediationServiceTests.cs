@@ -133,8 +133,8 @@ public sealed class AccountLockoutRemediationServiceTests : IDisposable
     [Fact]
     public async Task LogoffSources_Executed_NotifiesAdmins()
     {
-        // Execute:true reaches (and fails at) the credential gate, but the returned result
-        // still carries Executed == true, so the mandatory admin notification must fire.
+        // Execute:true reaches (and fails at) the credential gate: no logoff was attempted, but an
+        // execute request that got past its ticket still sends the mandatory admin notification.
         var service = CreateService(out _, out var email, moduleConfigValues: new Dictionary<string, string>());
 
         await service.LogoffLockoutSourcesAsync(
@@ -183,6 +183,149 @@ public sealed class AccountLockoutRemediationServiceTests : IDisposable
         Assert.Contains("credentials", result.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    // ---- Execute refusals that need no directory come first; Executed means a logoff was attempted ----
+
+    private const string LogoffPolicy = "AccountLockoutRemediationLogoff";
+    private const string TicketRequired = "Ticket Number is required for logoff execution.";
+    private const string LogoffDenied = "You are not authorized to log users off.";
+
+    public enum LogoffPath { Sources, Sweep }
+
+    private static Task<AccountLogoffResult> Run(AccountLockoutRemediationService service, LogoffPath path, bool execute, string ticket)
+        => path == LogoffPath.Sources
+            ? service.LogoffLockoutSourcesAsync(new AccountLockoutLogoffRequest(["jdoe"], 24, ["dc1"], execute, ticket, 0), Context())
+            : service.SweepScopedComputersAsync(new AccountScopedLogoffRequest(["jdoe"], "OU=Test,DC=x", [], execute, ticket, 0), Context());
+
+    private static string MailAction(LogoffPath path)
+        => path == LogoffPath.Sources ? "AccountLockout_LogoffSources" : "AccountLockout_SweepScoped";
+
+    // The credential lookup is the first step of directory work on both paths; with no secret configured it
+    // fails and leaves this trace step, so its absence shows a request stopped before it.
+    private bool CredentialLookupWasReached()
+        => ReadLogEvents(trace: true).Any(e => e.GetProperty("stage").GetString() == "CredentialLookup");
+
+    private static Task AssertNoMail(EmailService email)
+        => email.DidNotReceiveWithAnyArgs().SendAdminNotificationAsync(default!, default!, default!, default, default!, default!, default);
+
+    [Theory]
+    [InlineData(LogoffPath.Sources, "")]
+    [InlineData(LogoffPath.Sources, ZeroWidthSpace)]
+    [InlineData(LogoffPath.Sweep, "")]
+    [InlineData(LogoffPath.Sweep, ZeroWidthSpace)]
+    public async Task Execute_WithNoTicket_IsRefusedBeforeDirectoryWork_AndMailsNobody(LogoffPath path, string ticket)
+    {
+        var service = CreateService(out var authorization, out var email, moduleConfigValues: new Dictionary<string, string>());
+
+        var result = await Run(service, path, execute: true, ticket);
+
+        Assert.False(result.Success);
+        Assert.Equal(TicketRequired, result.Message);
+        Assert.False(result.Executed);
+        Assert.False(CredentialLookupWasReached());
+        await authorization.DidNotReceive().AuthorizeAsync(Arg.Any<ClaimsPrincipal>(), Arg.Any<object?>(), LogoffPolicy);
+        await AssertNoMail(email);
+        Assert.DoesNotContain(ReadLogEvents(trace: false), e => e.GetProperty("eventType").GetString() == "audit");
+    }
+
+    [Theory]
+    [InlineData(LogoffPath.Sources, "LogoffFromLockoutSources")]
+    [InlineData(LogoffPath.Sweep, "SweepScopedComputers")]
+    public async Task Execute_ByAnOperatorNotAllowedToLogUsersOff_IsRefusedBeforeDirectoryWork_AuditedAndMailed(LogoffPath path, string auditAction)
+    {
+        var service = CreateService(out var authorization, out var email, moduleConfigValues: new Dictionary<string, string>());
+        authorization.AuthorizeAsync(Arg.Any<ClaimsPrincipal>(), Arg.Any<object?>(), LogoffPolicy)
+            .Returns(AuthorizationResult.Failed());
+
+        var result = await Run(service, path, execute: true, "INC123");
+
+        Assert.False(result.Success);
+        Assert.Equal(LogoffDenied, result.Message);
+        Assert.False(result.Executed);
+        Assert.False(CredentialLookupWasReached());
+
+        var audit = Assert.Single(ReadLogEvents(trace: false), e => e.GetProperty("eventType").GetString() == "audit");
+        Assert.Equal(auditAction, audit.GetProperty("action").GetString());
+        Assert.Equal("Failed", audit.GetProperty("result").GetString());
+        Assert.Equal("INC123", audit.GetProperty("ticket").GetString());
+
+        await email.Received(1).SendAdminNotificationAsync(
+            "tester", "127.0.0.1", MailAction(path), false, "INC123",
+            Arg.Is<IReadOnlyDictionary<string, string>>(d =>
+                d["Target Users"] == "jdoe" && d["Machines"] == "0" && d["Sessions Logged Off"] == "0" && d["Failures"] == "0"),
+            LogoffDenied);
+    }
+
+    [Theory]
+    [InlineData(LogoffPath.Sources)]
+    [InlineData(LogoffPath.Sweep)]
+    public async Task Execute_ThatGetsPastItsTicketAndPermission_ThenFailsBeforeAnyLogoff_IsNotExecuted_AndStillMails(LogoffPath path)
+    {
+        var service = CreateService(out var authorization, out var email, moduleConfigValues: new Dictionary<string, string>());
+
+        var result = await Run(service, path, execute: true, "INC123");
+
+        Assert.Contains("credentials", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(CredentialLookupWasReached());
+        Assert.False(result.Executed);
+        await authorization.Received().AuthorizeAsync(Arg.Any<ClaimsPrincipal>(), Arg.Any<object?>(), LogoffPolicy);
+        await email.Received(1).SendAdminNotificationAsync(
+            Arg.Any<string>(), Arg.Any<string>(), MailAction(path), false, "INC123",
+            Arg.Any<IReadOnlyDictionary<string, string>>(), result.Message);
+    }
+
+    [Theory]
+    [InlineData(LogoffPath.Sources)]
+    [InlineData(LogoffPath.Sweep)]
+    public async Task DryRun_NeedsNoTicketAndNoLogoffPermission_AndGoesOnToDirectoryWork(LogoffPath path)
+    {
+        var service = CreateService(out var authorization, out var email, moduleConfigValues: new Dictionary<string, string>());
+        authorization.AuthorizeAsync(Arg.Any<ClaimsPrincipal>(), Arg.Any<object?>(), LogoffPolicy)
+            .Returns(AuthorizationResult.Failed());
+
+        var result = await Run(service, path, execute: false, "");
+
+        Assert.Contains("credentials", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(CredentialLookupWasReached());
+        Assert.False(result.Executed);
+        await authorization.DidNotReceive().AuthorizeAsync(Arg.Any<ClaimsPrincipal>(), Arg.Any<object?>(), LogoffPolicy);
+        await AssertNoMail(email);
+    }
+
+    [Theory]
+    [InlineData(LogoffPath.Sources)]
+    [InlineData(LogoffPath.Sweep)]
+    public async Task Execute_WithNoModuleAccess_IsToldThatFirst_EvenWithNoTicket_AndStillMails(LogoffPath path)
+    {
+        var service = CreateService(out var authorization, out var email, moduleConfigValues: new Dictionary<string, string>());
+        authorization.AuthorizeAsync(Arg.Any<ClaimsPrincipal>(), Arg.Any<object?>(), Arg.Any<string>())
+            .Returns(AuthorizationResult.Failed());
+
+        var result = await Run(service, path, execute: true, "");
+
+        Assert.Equal("You are not authorized to access account lockout remediation.", result.Message);
+        Assert.False(result.Executed);
+        Assert.False(CredentialLookupWasReached());
+        await email.Received(1).SendAdminNotificationAsync(
+            Arg.Any<string>(), Arg.Any<string>(), MailAction(path), false, "",
+            Arg.Any<IReadOnlyDictionary<string, string>>(), result.Message);
+    }
+
+    [Theory]
+    [InlineData(LogoffPath.Sources)]
+    [InlineData(LogoffPath.Sweep)]
+    public async Task Execute_WithCorruptConfiguration_IsToldThatBeforeTheTicket_AndStillMails(LogoffPath path)
+    {
+        var service = CreateService(out _, out var email, corruptStore: true);
+
+        var result = await Run(service, path, execute: true, "");
+
+        Assert.Contains("corrupt", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.False(result.Executed);
+        await email.Received(1).SendAdminNotificationAsync(
+            Arg.Any<string>(), Arg.Any<string>(), MailAction(path), false, "",
+            Arg.Any<IReadOnlyDictionary<string, string>>(), result.Message);
+    }
+
     // ---- Ticket: sanitized, not refused, for invisible characters (rev-j1, decision 2026-11-09) ----------
 
     private const string ZeroWidthSpace = "\u200B";
@@ -191,7 +334,7 @@ public sealed class AccountLockoutRemediationServiceTests : IDisposable
     [Fact]
     public async Task RunLogoff_Execute_AnInvisibleOnlyTicket_IsRefusedWithTheServicesOwnWords()
     {
-        // Through the seam: every public path stops at the credential lookup before it reaches this gate.
+        // Through the seam, which keeps its own gate for a caller that skipped the public boundary.
         var service = CreateService(out var authorization);
 
         var result = await service.RunLogoffAsync(
@@ -237,7 +380,7 @@ public sealed class AccountLockoutRemediationServiceTests : IDisposable
     [Fact]
     public async Task Execute_TheAdminNotificationCarriesTheTicketSanitized_OnBothPaths()
     {
-        // Both reach (and fail at) the credential lookup with Executed == true, so each notifies.
+        // Both are execute requests that reach (and fail at) the credential lookup, so each notifies.
         var service = CreateService(out _, out var email, moduleConfigValues: new Dictionary<string, string>());
 
         await service.LogoffLockoutSourcesAsync(

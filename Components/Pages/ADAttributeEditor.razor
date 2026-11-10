@@ -116,6 +116,10 @@
                             <small class="text-muted">@changedCount changed</small>
                         </div>
                         <div class="card-body p-0">
+                            @if (EditorService.IsLegendUnreadable())
+                            {
+                                <div class="alert alert-warning py-2 m-2"><small>The list of choices could not be read, so some choices and their descriptions are missing below.</small></div>
+                            }
                             <div>
                                 <table class="table table-sm mb-0">
                                     <thead>

@@ -449,8 +449,12 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
 
         var notice = AdminNotification(email);
         Assert.Equal("SetOutOfOffice_Scheduled", notice[2]);
-        Assert.Equal(Mailbox, notice[3]);
-        Assert.Equal(Ticket, notice[7]);
+        Assert.Equal(true, notice[3]);
+        Assert.Equal(Ticket, notice[4]);
+        // The administrators' mail names the mailbox on a row of its own, and nothing else: no permission rows.
+        var rows = Assert.IsAssignableFrom<IReadOnlyDictionary<string, string>>(notice[5]);
+        Assert.Equal(["Mailbox=" + Mailbox], rows.Select(row => $"{row.Key}={row.Value}"));
+        Assert.Null(notice[6]);
     }
 
     // aud-a7d. The mailbox owner's notification took a two-way word, "disabled" or "enabled", so a

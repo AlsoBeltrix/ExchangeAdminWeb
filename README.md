@@ -437,6 +437,9 @@ View and edit allowlisted Active Directory attributes for on-premises user accou
   **missing**. **Remove now** takes that one semicolon entry out and keeps the others; removing the last one asks for a
   confirmation, because no search-base boundary will remain: the editor may then search the whole directory
 - Uses Delinea credentials for Active Directory operations
+- Choice attributes take extra choices and their descriptions from the legend in the config database
+  (`attribute_legend`). A legend that cannot be read is logged as an error and the editor says, above the
+  attribute table, that choices are missing; an attribute's own configured choices are still offered
 - **A save is done when it reads back as written.** The re-read before the write, the write and the read-back all go to one
   writable domain controller of the object's domain, located at the time of the save and confirmed by its RootDSE
   (logged) - never a read-only one, whose writes would all be refused. Each value
@@ -693,6 +696,9 @@ implicated or scoped domain computers. Disabled by default; both permissions fai
 - Scoped sweep: log accounts off every machine in an OU/computer list (with a
   `MaxSweepTargets` cap and a WinRM fan-out throttle)
 - Dry-run by default; execution requires a ticket number and typed "LOG OFF" confirmation
+- An execute request is checked for its ticket and for the `Logoff` permission before any credential is
+  fetched or directory read. Administrators are mailed for every execute request - one refused for the
+  permission included - except one refused for a missing ticket; a dry run mails nobody
 - Targets are re-resolved through Protected Principals with an immutable-GUID re-check
   immediately before logoff; all paths audited and traced
 - Granular `Logoff` permission gates execution separately from `Access`
@@ -1547,6 +1553,9 @@ Module secrets must be directly readable by the Delinea API bootstrap credential
 **Admin Notifications (always sent):**
 - Every permission operation (success or failure)
 - Includes full details: who, what, when, IP address, ticket number
+- Migration and Out of Office mails carry rows named for what they hold (Mailbox, Batch, CSV File, Eligibility,
+  Mailboxes, Options, Succeeded) under a subject starting `[Admin]`. The mailbox-permission mail (`[Exchange Admin]`,
+  with Target Mailbox, Affected User and Permission Type rows) is sent by the permission modules only
 
 **User Notifications (optional):**
 - Set `NotifyUsersOnPermissionGrant: true` to enable

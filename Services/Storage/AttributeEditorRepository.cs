@@ -180,35 +180,28 @@ public sealed class AttributeEditorRepository
         });
     }
 
-    /// <summary>Reads the legend (fail-open: returns empty on any read failure).</summary>
+    /// <summary>Reads the legend. A read failure throws: the caller logs it and says the legend is unreadable.</summary>
     public Dictionary<string, Dictionary<string, AttributeLegendRow>> ReadLegend()
     {
-        try
+        return _store.Read(connection =>
         {
-            return _store.Read(connection =>
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT attribute_name, choice_value, description, note, source FROM attribute_legend;";
+            var map = new Dictionary<string, Dictionary<string, AttributeLegendRow>>(StringComparer.OrdinalIgnoreCase);
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
             {
-                using var command = connection.CreateCommand();
-                command.CommandText = "SELECT attribute_name, choice_value, description, note, source FROM attribute_legend;";
-                var map = new Dictionary<string, Dictionary<string, AttributeLegendRow>>(StringComparer.OrdinalIgnoreCase);
-                using var reader = command.ExecuteReader();
-                while (reader.Read())
-                {
-                    var attr = reader.GetString(0);
-                    var choice = reader.GetString(1);
-                    var desc = reader.IsDBNull(2) ? string.Empty : reader.GetString(2);
-                    var note = reader.IsDBNull(3) ? null : reader.GetString(3);
-                    var source = reader.IsDBNull(4) ? null : reader.GetString(4);
-                    if (!map.TryGetValue(attr, out var inner))
-                        map[attr] = inner = new Dictionary<string, AttributeLegendRow>(StringComparer.OrdinalIgnoreCase);
-                    inner[choice] = new AttributeLegendRow(desc, note, source);
-                }
-                return map;
-            });
-        }
-        catch
-        {
-            return new Dictionary<string, Dictionary<string, AttributeLegendRow>>(StringComparer.OrdinalIgnoreCase);
-        }
+                var attr = reader.GetString(0);
+                var choice = reader.GetString(1);
+                var desc = reader.IsDBNull(2) ? string.Empty : reader.GetString(2);
+                var note = reader.IsDBNull(3) ? null : reader.GetString(3);
+                var source = reader.IsDBNull(4) ? null : reader.GetString(4);
+                if (!map.TryGetValue(attr, out var inner))
+                    map[attr] = inner = new Dictionary<string, AttributeLegendRow>(StringComparer.OrdinalIgnoreCase);
+                inner[choice] = new AttributeLegendRow(desc, note, source);
+            }
+            return map;
+        });
     }
 
     /// <summary>True if a legend has been imported/saved (marker set).</summary>

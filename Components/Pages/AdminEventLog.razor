@@ -433,7 +433,7 @@
                 {
                     <div class="mb-3">
                         <label class="form-label">Ticket Number <span class="text-danger">*</span></label>
-                        <input type="text" class="form-control form-control-sm" @bind="undoTicket" placeholder="Required" />
+                        <input type="text" class="form-control form-control-sm" @bind="undoTicket" @bind:event="oninput" placeholder="Required" />
                     </div>
                 }
             }

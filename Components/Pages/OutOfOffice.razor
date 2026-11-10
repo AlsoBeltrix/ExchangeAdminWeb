@@ -392,14 +392,14 @@
         if (isSetting) return;
         isSetting = true;
 
-        // Audit finding aud-a7b. A7 captured the mailbox and nothing else: the state, both
-        // messages, the schedule and the ticket were still read from the bound fields at the write
-        // and again at the audit, after several awaits. An edit landing in between changed what was
-        // written, and let the audit row and the notification name a state or ticket the change was
-        // not made under. Every input is now captured here, once, before the first await, into one
-        // immutable request - the Comms-10k C7 shape - and nothing below this line may read a bound
-        // field. The service takes the request itself, so the write cannot be handed anything else.
-        // aud-a7e: the schedule's zone is captured with the times it belongs to.
+        // Every input - the mailbox, the state, both messages, the schedule and the ticket - is
+        // captured here, once, before the first await, into one immutable request, and nothing
+        // below this line may read a bound field. Read after an await, an edit landing in between
+        // would change what is written, and let the audit row and the notification name a state
+        // or ticket the change was not made under.
+        //
+        // The service takes the request itself, so the write cannot be handed anything else.
+        // The schedule's zone is captured with the times it belongs to.
         var request = OutOfOfficeRequest.FromForm(
             setEmail, oofState, internalMessage, externalMessage, startTime, endTime, scheduleZone, ticketNumber);
         var target = request.Mailbox;
@@ -431,20 +431,20 @@
         // completes early at the step it reached, which is what happened, not a lie about size.
         using var activity = Progress.Begin("Out of Office", oofLabel, ActivitySize.Steps(5));
 
-        // The try starts HERE, above the target check, not below it. Review of aud-a7 found that
-        // raising isSetting before the awaited protected-principal check - which is the whole
-        // point of that fix - put two new ways out of this method in front of the finally: the
-        // refusal's own return, and anything the resolve throws. Either left the mailbox box and
-        // the submit button disabled for good, with the operator having to reload the page.
+        // The try starts HERE, above the target check, not below it. isSetting is raised before
+        // the awaited protected-principal check, so that check has two ways out of this method:
+        // the refusal's own return, and anything the resolve throws. Outside the try, either
+        // would skip the finally and leave the mailbox box and the submit button disabled for
+        // good, with the operator having to reload the page.
         //
         // There is still exactly one Complete in source order, in the finally, so the registry's
         // condition 3 reads what it read before. The refusal now completes the activity as the
         // non-success it is, carrying its reason, instead of being ended silently by the using.
         try
         {
-            // Sweep item 41. The ticket, checked here behind the button, which was its only gate: presence by the shared rule
-            // (kd-24), then ServiceNow where that integration is enabled - a dormant ServiceNow passes every ticket, a blank
-            // one included (kd-18). Refused before anything is read or written, and recorded as this page's other refusals are,
+            // The ticket, checked here behind the button as well as on it: presence by the shared rule,
+            // then ServiceNow where that integration is enabled - a dormant ServiceNow passes every ticket, a blank
+            // one included. Refused before anything is read or written, and recorded as this page's other refusals are,
             // with the refusal fields saying nothing was attempted. The finally completes the activity with the refusal.
             var ticketValidation = TicketPresence.Refusal(request.Ticket) ?? await ServiceNow.ValidateTicketAsync(request.Ticket);
             if (!ticketValidation.IsValid)
@@ -512,7 +512,7 @@
             }
 
             // Fetch current state before mutation for audit trail - of the mailbox the write is
-            // bound to (aud-a2d), so the state recorded belongs to the mailbox changed.
+            // bound to, so the state recorded belongs to the mailbox changed.
             string previousState = "Unknown";
             try
             {
@@ -523,7 +523,7 @@
             }
             catch (Exception ex) { Logger.LogWarning(ex, "Could not retrieve current OOF state for {Target} before mutation", target); }
 
-            // aud-a2d. The write takes the mailbox the check validated, never request.Mailbox: the
+            // The write takes the mailbox the check validated, never request.Mailbox: the
             // captured address is what the operator asked for, the validation's mailbox is what it is.
             activity.Step(request.State == "Disabled" ? "disabling the auto-reply" : "writing the auto-reply");
             setResult = await OofService.SetOutOfOfficeAsync(request, protectedValidation.Mailbox);
@@ -562,8 +562,8 @@
                 await Email.SendAdminNotificationAsync(
                     currentUser, clientIpAddress,
                     request.State == "Disabled" ? "DisableOutOfOffice" : $"SetOutOfOffice_{request.State}",
-                    target, "N/A", "OutOfOffice",
                     setResult.Success, request.Ticket,
+                    new Dictionary<string, string> { ["Mailbox"] = target },
                     setResult.Success ? null : setResult.Message);
             }
             catch (Exception ex)
@@ -575,7 +575,7 @@
             {
                 try
                 {
-                    // aud-a7d: the captured request, not a two-way "enabled"/"disabled" word - a
+                    // The captured request, not a two-way "enabled"/"disabled" word - a
                     // Scheduled write is reported to the mailbox owner as scheduled, with its window.
                     await Email.SendOofNotificationAsync(
                         target, currentUser, request);

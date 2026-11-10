@@ -50,7 +50,7 @@
                             @* kd-72: bound on input, not on change. Enter's keydown reaches the server before the
                                change event, so a change-bound box listed the user it held before. *@
                             <input type="email" class="form-control" @bind="userPrincipalName" @bind:event="oninput"
-                                   placeholder="user@analog.com" disabled="@isLoading" @onkeydown="HandleKeyDown" />
+                                   placeholder="user@example.com" disabled="@isLoading" @onkeydown="HandleKeyDown" />
                             <button class="btn btn-primary" @onclick="ListMethods" disabled="@(isLoading || string.IsNullOrWhiteSpace(userPrincipalName))">
                                 List Methods
                             </button>

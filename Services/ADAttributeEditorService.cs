@@ -125,6 +125,7 @@ public class ADAttributeEditorService
     private DateTime _allowlistLoadedAt = DateTime.MinValue;
     private Dictionary<string, Dictionary<string, AttributeLegendEntry>>? _cachedLegend;
     private DateTime _legendLoadedAt = DateTime.MinValue;
+    private bool _legendUnreadable;
     private static readonly TimeSpan AllowlistCacheTtl = TimeSpan.FromSeconds(30);
 
     // Cross-process freshness on the shared config database (docs/SharedConfigDb-Plan.md AC4):
@@ -779,25 +780,47 @@ public class ADAttributeEditorService
                 return _cachedLegend;
         }
 
-        // Token BEFORE the load (scd-2). Legend is fail-open: the repository returns an empty
-        // map on any read failure.
+        // Token BEFORE the load, so a write that lands during it is seen by the next check. The legend is
+        // fail-open: one that cannot be read is an empty legend, logged, and reported by IsLegendUnreadable.
         var token = _changeWatcher.CurrentToken();
-        var rows = _repository.ReadLegend();
-        var parsed = rows.ToDictionary(
-            outer => outer.Key,
-            outer => outer.Value.ToDictionary(
-                inner => inner.Key,
-                inner => new AttributeLegendEntry(inner.Value.Description, inner.Value.Note, inner.Value.Source),
-                StringComparer.OrdinalIgnoreCase),
-            StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, Dictionary<string, AttributeLegendEntry>> parsed;
+        var unreadable = false;
+        try
+        {
+            parsed = _repository.ReadLegend().ToDictionary(
+                outer => outer.Key,
+                outer => outer.Value.ToDictionary(
+                    inner => inner.Key,
+                    inner => new AttributeLegendEntry(inner.Value.Description, inner.Value.Note, inner.Value.Source),
+                    StringComparer.OrdinalIgnoreCase),
+                StringComparer.OrdinalIgnoreCase);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "The attribute legend could not be read; the choices and descriptions it supplies are missing from the editor");
+            parsed = new Dictionary<string, Dictionary<string, AttributeLegendEntry>>(StringComparer.OrdinalIgnoreCase);
+            unreadable = true;
+        }
 
         lock (_allowlistLock)
         {
             _cachedLegend = parsed;
+            _legendUnreadable = unreadable;
             _legendLoadedAt = DateTime.UtcNow;
             _legendLoadedToken = token;
         }
         return parsed;
+    }
+
+    /// <summary>
+    /// True when the legend could not be read, as opposed to there being none: the choices and descriptions
+    /// it supplies are then missing, and the editor says so.
+    /// </summary>
+    public bool IsLegendUnreadable()
+    {
+        GetLegend();
+        lock (_allowlistLock)
+            return _legendUnreadable;
     }
 
     // One-time import of legacy ad-editable-attributes(.legend).json into the store, then archive
