@@ -94,14 +94,6 @@ public class NamedLocationsService
         return locations.OrderBy(l => l.DisplayName).ToList();
     }
 
-    public async Task<NamedLocation?> GetByIdAsync(string id)
-    {
-        var client = await GetGraphClientAsync();
-        using var doc = await client.GetAsync($"/identity/conditionalAccess/namedLocations/{Uri.EscapeDataString(id)}");
-        if (doc == null) return null;
-        return ParseNamedLocation(doc.RootElement);
-    }
-
     public async Task<NamedLocationResult> CreateIpLocationAsync(string displayName, List<string> cidrRanges, bool isTrusted)
     {
         var client = await GetGraphClientAsync();

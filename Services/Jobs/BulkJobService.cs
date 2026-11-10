@@ -397,8 +397,6 @@ public sealed class BulkJobService
         return job.Status.ToString();
     }
 
-    public bool IsStalled(BulkJob job, DateTime nowUtc) => DisplayStatus(job, nowUtc) == "Stalled";
-
     // -------------------------------------------------------------------------
     // Pump - single loop, drains the FIFO queue one job at a time
     // -------------------------------------------------------------------------
