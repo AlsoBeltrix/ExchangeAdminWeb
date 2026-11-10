@@ -43,6 +43,7 @@ public sealed class BulkJobService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly BulkJobRepository _repository;
     private readonly BulkJobProcessorRegistry _registry;
+    private readonly IJobAuthorization _authorization;
     private readonly ILogger<BulkJobService> _logger;
     private readonly TimeSpan _staleHeartbeat;
     private readonly int _recentJobLimit;
@@ -73,12 +74,14 @@ public sealed class BulkJobService
         IServiceScopeFactory scopeFactory,
         BulkJobRepository repository,
         BulkJobProcessorRegistry registry,
+        IJobAuthorization authorization,
         IConfiguration config,
         ILogger<BulkJobService> logger)
     {
         _scopeFactory = scopeFactory;
         _repository = repository;
         _registry = registry;
+        _authorization = authorization;
         _logger = logger;
 
         // aud-a62. Read without a throw: GetValue<double?> and GetValue<int?> threw on a value that is not a number, and
@@ -645,6 +648,10 @@ public sealed class BulkJobService
     /// Executes the job's rows, aggregating per-row failures (one bad row never aborts the batch),
     /// and returns the terminal status + message. Cancellation is cooperative and checked before
     /// each row; an in-flight cmdlet cannot be aborted mid-call (documented limitation).
+    /// Before every row the job is re-checked against the live stores: a row of a job whose module
+    /// is disabled, or whose submitter's access is gone or cannot be established, goes to the
+    /// processor's <see cref="IBulkJobProcessor.RefuseRow"/> and never to its work. No processor
+    /// can leave the check out, and a check or a refusal that throws is a failed row, not a run one.
     /// </summary>
     private async Task<(BulkJobStatus terminal, string? message)> ExecuteRowsAsync(
         BulkJob job, IBulkJobProcessor processor, int total, CancellationToken shutdown)
@@ -667,7 +674,9 @@ public sealed class BulkJobService
                 BulkJobRowOutcome outcome;
                 try
                 {
-                    outcome = await processor.ProcessRowAsync(job, i, cts.Token);
+                    outcome = _authorization.Check(job) is { } refusal
+                        ? processor.RefuseRow(job, i, refusal)
+                        : await processor.ProcessRowAsync(job, i, cts.Token);
                 }
                 catch (OperationCanceledException) when (cts.IsCancellationRequested || _repository.IsCancelRequested(job.Id))
                 {

@@ -6,16 +6,17 @@ namespace ExchangeAdminWeb.Services.Jobs;
 /// <summary>
 /// The ConferenceRooms per-row work behind the bulk job runner (docs/BulkJobRunner-Plan.md, Slice 4).
 /// The runner owns lifecycle/queue/persistence; this owns "what one row does" - off the browser
-/// circuit, using ONLY the submission context captured on the job (submitter, ip, ticket, auth
-/// snapshot), never any ambient circuit which no longer exists.
+/// circuit, using ONLY the submission context captured on the job (submitter, ip, ticket), never any
+/// ambient circuit which no longer exists. The runner re-checks the module's enablement and the
+/// submitter's captured authorization snapshot before every row, and a row it refuses comes to
+/// <see cref="RefuseRow"/>, never here.
 ///
-/// Per row it: (1) re-checks the submitter's captured authorization snapshot against the section's
-/// current allowed groups (option (a)); (2) binds the row's room on BOTH Finder and Type paths via the
+/// Per row it: (1) binds the row's room on BOTH Finder and Type paths via the
 /// shared <see cref="ConferenceRoomBinder"/> (one binding point for the whole module) - the write runs
 /// only inside its onBound delegate, so a row with no room to bind never reaches a side effect;
-/// (3) opens a CLEAN ROOT trace scope so the row is not nested
-/// under leaked async-local context; (4) calls the SAME ConferenceRoomService methods the live page
-/// uses (per-row Exchange/AD logic is unchanged); (5) audits per row with the captured
+/// (2) opens a CLEAN ROOT trace scope so the row is not nested
+/// under leaked async-local context; (3) calls the SAME ConferenceRoomService methods the live page
+/// uses (per-row Exchange/AD logic is unchanged); (4) audits per row with the captured
 /// actor/ip/ticket. The completion admin notification fires from the job at terminal state.
 ///
 /// Registered scoped so ConferenceRoomService (scoped) can be a dependency; the runner resolves this
@@ -25,8 +26,6 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
 {
     private readonly IConferenceRoomBulkOperations _rooms;
     private readonly ConferenceRoomBinder _roomBinder;
-    private readonly SectionAccessService _sectionAccess;
-    private readonly ModuleEnablementService _enablement;
     private readonly OperationTraceService _trace;
     private readonly AuditService _audit;
     private readonly EmailService _email;
@@ -40,15 +39,12 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
     internal const string HostStoppedRow = "The service stopped before this row was written. Nothing was written.";
 
     public const string ModuleName = "ConferenceRooms";
-    private const string Section = "ConferenceRooms";
 
     public string ModuleId => ModuleName;
 
     public ConferenceRoomBulkProcessor(
         IConferenceRoomBulkOperations rooms,
         ConferenceRoomBinder roomBinder,
-        SectionAccessService sectionAccess,
-        ModuleEnablementService enablement,
         OperationTraceService trace,
         AuditService audit,
         EmailService email,
@@ -57,8 +53,6 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
     {
         _rooms = rooms;
         _roomBinder = roomBinder;
-        _sectionAccess = sectionAccess;
-        _enablement = enablement;
         _trace = trace;
         _audit = audit;
         _email = email;
@@ -78,61 +72,18 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
     {
         var payload = Deserialize(job);
         var isFinder = payload.Kind == ConferenceRoomJobPayload.FinderJobType;
-        var target = isFinder
-            ? payload.FinderRows![rowIndex].Email
-            : payload.TypeRows![rowIndex].Email;
+        var (target, actionAudit) = RowIdentity(payload, rowIndex);
         var ticket = job.Ticket ?? "";
-        var actionAudit = isFinder ? "ConferenceRooms_SetMetadata_Bulk" : "ConferenceRooms_SetType_Bulk";
 
-        // 1) Off-circuit authorization re-check (option (a)): the submitter's captured claims must
-        // still satisfy the section's allowed groups. Fail closed - a job whose snapshot lacks
-        // access is denied on every row and audited, never processed.
-        // Audit finding A8. This checked the section's allowed groups and nothing else, so a
-        // DISABLED Conference Rooms module kept changing rooms: queued jobs and every
-        // subsequent row ran on, because live authorization rejects a disabled module and this
-        // off-circuit path never asked. Same gap Comms-10k closed as aud-c2, same shape, so
-        // this reuses it rather than inventing a second one.
-        //
-        // Checked before the snapshot: "the module is off" is true regardless of who submitted
-        // the job, and saying so is a better audit record than "authorization denied".
-        if (!_enablement.IsModuleEnabled(ModuleName))
-        {
-            Audit(job, actionAudit, target, success: false, ticket, "Conference Rooms is currently disabled.");
-            return Failed(target, "Conference Rooms is currently disabled.");
-        }
+        // A job with no ticket is refused, row by row, before the room binding and any write. The
+        // page refuses a blank ticket itself, but a job is checked again here because this is the
+        // writer that runs it.
+        if (RefuseWithoutTicket(job, actionAudit, target) is { } noTicket)
+            return noTicket;
 
-        // kd-23. A job with no ticket is refused, row by row, before the authorization re-check, the
-        // room binding and any write - the page's order. The page has refused a blank ticket since
-        // kd-7, but a job submitted before that, while ServiceNow was dormant and passed one, can still
-        // be queued or persisted, and this is the writer that runs it. Same check as the page
-        // (ConferenceRoomService.RequireTicket); the row's audit says nothing was attempted.
-        if (ConferenceRoomService.RequireTicket(job.Ticket) is { } missingTicket)
-        {
-            var refusal = $"Ticket validation failed: {missingTicket.Message}. Nothing was written.";
-            try
-            {
-                _audit.LogConferenceRoomAction(job.SubmittedBy, job.SubmittedIp, actionAudit, target, false, ticket,
-                    errorDetail: refusal, extra: ConferenceRoomService.WithRefusal(null, ConferenceRoomService.TicketRefusalStep));
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Audit failed for bulk job {Job} target {Target}", job.Id, target);
-            }
-
-            return Failed(target, refusal);
-        }
-
-        var snapshot = JobAuthorizationSnapshot.FromJson(job.AuthSnapshotJson);
-        var allowed = _sectionAccess.GetGroupsForSection(Section);
-        if (snapshot is null || !snapshot.IsStillAuthorized(allowed))
-        {
-            Audit(job, actionAudit, target, success: false, ticket, "Authorization denied (captured snapshot lacks access).");
-            return Failed(target, "Authorization denied.");
-        }
-
-        // 2) Room binding - on BOTH Finder AND Type paths, through the SHARED ConferenceRoomBinder so
+        // 1) Room binding - on BOTH Finder AND Type paths, through the SHARED ConferenceRoomBinder so
         // the room is bound exactly once per row and no path can write without it. The write (steps
-        // 3-5) lives inside onBound, so a row with no room to bind never reaches the trace scope or any
+        // 2-4) lives inside onBound, so a row with no room to bind never reaches the trace scope or any
         // side effect (Known Failure Class #1). A refusal is audited here under the _Bulk action with
         // the captured job actor/ip/ticket. No protection check and no operator: protected principals
         // do not apply to Conference Rooms (owner ruling 2026-11-03), so a bulk row needs no principal.
@@ -144,21 +95,21 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
             },
             onBound: async room =>
             {
-                // 3) Clean-root trace scope + 4) same ConferenceRoomService methods the live page uses,
-                // bound to the room the binder bound for THIS row (aud-a2d), never the row's string.
+                // 2) Clean-root trace scope + 3) same ConferenceRoomService methods the live page uses,
+                // bound to the room the binder bound for THIS row, never the row's string.
                 var traceAction = isFinder ? "SetMetadata_Bulk" : "SetType_Bulk";
                 using var op = _trace.BeginRootOperation(ModuleName, traceAction, job.SubmittedBy, job.SubmittedIp, target, ticket);
                 try
                 {
                     RoomOperationResult r = isFinder
-                        ? await ApplyFinderRowAsync(payload.FinderRows![rowIndex], room, cancellationToken) // kd-58 A9: the job's token, as the page's
+                        ? await ApplyFinderRowAsync(payload.FinderRows![rowIndex], room, cancellationToken) // the job's token, as the page's
                         : await ApplyTypeRowAsync(payload.TypeRows![rowIndex], room);
 
                     op.Complete(r.Success, r.Message);
 
-                    // 5) Per-row audit with captured actor/ip/ticket (same as the live page), plus
+                    // 4) Per-row audit with captured actor/ip/ticket (same as the live page), plus
                     // the identity written and - only when the service reports one written - the
-                    // Active Directory object (aud-a2g); `target` stays the row as typed.
+                    // Active Directory object; `target` stays the row as typed.
                     Audit(job, actionAudit, target, r.Success, ticket, r.Success ? null : r.Message,
                         newValues: isFinder ? FinderNewValues(payload.FinderRows![rowIndex]) : TypeNewValues(payload.TypeRows![rowIndex]),
                         room: room, writtenDirectoryObject: r.WrittenDirectoryObject, membershipConfirmed: r.DirectoryMembershipConfirmed,
@@ -168,17 +119,17 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
                     {
                         Target = target,
                         Status = r.Partial ? BulkJobRowStatus.Partial : (r.Success ? BulkJobRowStatus.Success : BulkJobRowStatus.Failed),
-                        // aud-a2o. A job shows each row's message and not its steps, so a room-list membership the
-                        // on-prem read-back confirmed - not one this row is known to have written (aud-a2n) - is told
+                        // A job shows each row's message and not its steps, so a room-list membership the
+                        // on-prem read-back confirmed - not one this row is known to have written - is told
                         // in the message too, in the words the page's step and the audit use; without it the row
-                        // read as any applied add. aud-a2q: City/State/Country the read-back found in place after
+                        // reads as any applied add. City/State/Country the read-back found in place after
                         // Set-ADUser reported an error are told the same way, first - the order the steps ran in.
                         Message = string.Join(" ", new[] { r.Message, r.DirectoryAttributesConfirmed, r.DirectoryMembershipConfirmed }.OfType<string>())
                     };
                 }
                 catch (OperationCanceledException ex) when (isFinder && cancellationToken.IsCancellationRequested)
                 {
-                    // kd-58 A9 (3.9). The job's token stopped the row before its first write - it reaches only the service's
+                    // The job's token stopped the row before its first write - it reaches only the service's
                     // steps before Set-Place (SetRoomMetadataAndListAsync) - so nothing was written, and it is not a row that
                     // failed. The operator's cancel request (the persisted flag, set before the token is signalled) is filed
                     // Cancelled in the app's phrase, under the job's captured actor, address and ticket; the host stopping is
@@ -193,11 +144,31 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
                 catch (Exception ex)
                 {
                     op.Complete(false, ex.Message, ex);
-                    // No result, so no Active Directory object reported written (aud-a2g).
+                    // No result, so no Active Directory object reported written.
                     Audit(job, actionAudit, target, success: false, ticket, ex.Message, room: room);
                     return Failed(target, ex.Message);
                 }
             });
+    }
+
+    public BulkJobRowOutcome RefuseRow(BulkJob job, int rowIndex, JobRefusal refusal)
+    {
+        var (target, actionAudit) = RowIdentity(Deserialize(job), rowIndex);
+
+        // "The module is off" is true regardless of who submitted the job, and saying so is a
+        // better audit record than "authorization denied".
+        if (refusal == JobRefusal.ModuleDisabled)
+        {
+            Audit(job, actionAudit, target, success: false, job.Ticket ?? "", "Conference Rooms is currently disabled.");
+            return Failed(target, "Conference Rooms is currently disabled.");
+        }
+
+        // A job with no ticket says so before it says its access is gone - the page's order.
+        if (RefuseWithoutTicket(job, actionAudit, target) is { } noTicket)
+            return noTicket;
+
+        Audit(job, actionAudit, target, success: false, job.Ticket ?? "", "Authorization denied (captured snapshot lacks access).");
+        return Failed(target, "Authorization denied.");
     }
 
     public async Task OnJobCompletedAsync(BulkJob job)
@@ -252,6 +223,32 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
+
+    private static (string Target, string AuditAction) RowIdentity(ConferenceRoomJobPayload payload, int rowIndex) =>
+        payload.Kind == ConferenceRoomJobPayload.FinderJobType
+            ? (payload.FinderRows![rowIndex].Email, "ConferenceRooms_SetMetadata_Bulk")
+            : (payload.TypeRows![rowIndex].Email, "ConferenceRooms_SetType_Bulk");
+
+    // A job with no ticket is refused row by row, with the page's own check, and its audit row says
+    // nothing was attempted. Null when the job carries a ticket.
+    private BulkJobRowOutcome? RefuseWithoutTicket(BulkJob job, string actionAudit, string target)
+    {
+        if (ConferenceRoomService.RequireTicket(job.Ticket) is not { } missingTicket)
+            return null;
+
+        var refusal = $"Ticket validation failed: {missingTicket.Message}. Nothing was written.";
+        try
+        {
+            _audit.LogConferenceRoomAction(job.SubmittedBy, job.SubmittedIp, actionAudit, target, false, job.Ticket ?? "",
+                errorDetail: refusal, extra: ConferenceRoomService.WithRefusal(null, ConferenceRoomService.TicketRefusalStep));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Audit failed for bulk job {Job} target {Target}", job.Id, target);
+        }
+
+        return Failed(target, refusal);
+    }
 
     private void Audit(BulkJob job, string action, string target, bool success, string ticket,
         string? error = null, Dictionary<string, object?>? newValues = null, ValidatedMailbox? room = null,

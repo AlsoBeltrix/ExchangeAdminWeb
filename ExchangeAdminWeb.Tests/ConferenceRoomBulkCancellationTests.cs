@@ -187,13 +187,13 @@ public sealed class ConferenceRoomBulkCancellationTests : IDisposable
     private BulkJobService Runner(ConferenceRoomService service)
     {
         var services = new ServiceCollection();
-        services.AddScoped(_ => new ConferenceRoomBulkProcessor(service, Binder(), _sectionAccess, _h.Enablement, _h.Trace, _h.Audit,
+        services.AddScoped(_ => new ConferenceRoomBulkProcessor(service, Binder(), _h.Trace, _h.Audit,
             Substitute.For<EmailService>(_h.Config, NullLogger<EmailService>.Instance), NullLogger<ConferenceRoomBulkProcessor>.Instance,
             _jobs));
         var provider = services.BuildServiceProvider();
         var registry = new BulkJobProcessorRegistry(
             [new KeyValuePair<string, Type>(ConferenceRoomBulkProcessor.ModuleName, typeof(ConferenceRoomBulkProcessor))]);
-        return new BulkJobService(provider.GetRequiredService<IServiceScopeFactory>(), _jobs, registry,
+        return new BulkJobService(provider.GetRequiredService<IServiceScopeFactory>(), _jobs, registry, new StubJobAuthorization(),
             new ConfigurationBuilder().Build(), NullLogger<BulkJobService>.Instance);
     }
 

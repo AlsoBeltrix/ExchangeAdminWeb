@@ -1,5 +1,12 @@
 using System.Text.Json;
+using ExchangeAdminWeb.Services;
 using ExchangeAdminWeb.Services.Jobs;
+using ExchangeAdminWeb.Services.Storage;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using NSubstitute;
 
 namespace ExchangeAdminWeb.Tests;
 
@@ -118,6 +125,148 @@ public class MigrationReportExportProcessorTests
         Assert.Contains("_reports.Write(", source, StringComparison.Ordinal);
         Assert.DoesNotContain("ZipArchive", source, StringComparison.Ordinal);
         Assert.DoesNotContain("File.WriteAllText", source, StringComparison.Ordinal);
+    }
+
+    // -------------------------------------------------------------------------
+    // Behaviour, through the real runner over the real authorization check and its stores. Every
+    // mailbox's report is already held, so a row that runs is a reuse and needs no Exchange session.
+    // -------------------------------------------------------------------------
+
+    private const string Batch = "Wave1-Finance";
+    private const string Disabled = "Exchange Migration is currently disabled. The report was not fetched.";
+    private const string Denied = "Authorization denied. The report was not fetched.";
+    private static readonly string[] Mailboxes = ["a@x.com", "b@x.com", "c@x.com"];
+
+    private sealed class RunnerHarness : IDisposable
+    {
+        private readonly TempDir _temp = new();
+        private readonly JsonlLogService _log;
+        private readonly ServiceProvider _provider;
+        public JobAuthorizationStores Stores { get; } = new("Migration", "MigrationCheck");
+        public BulkJobRepository Repository { get; }
+        public BulkJobService Runner { get; }
+
+        public RunnerHarness()
+        {
+            var config = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?> { ["Audit:LogRoot"] = _temp.Path }).Build();
+            var env = Substitute.For<IWebHostEnvironment>();
+            env.ContentRootPath.Returns(_temp.Path);
+            var reports = new MigrationReportStore(env);
+            foreach (var mailbox in Mailboxes)
+                reports.Write(Batch, mailbox, "the move report", DateTime.UtcNow);
+            _log = new JsonlLogService(config, NullLogger<JsonlLogService>.Instance);
+            var audit = new AuditService(_log, new OperationTraceService(config, _log));
+
+            var factory = new SqliteConnectionFactory(Path.Combine(_temp.Path, "exchangeadmin-jobs.db"));
+            new JobStoreMigrator(factory).Migrate();
+            Repository = new BulkJobRepository(factory);
+            _provider = new ServiceCollection()
+                .AddScoped(_ => new MigrationReportExportProcessor(null!, reports, audit, NullLogger<MigrationReportExportProcessor>.Instance))
+                .BuildServiceProvider();
+            Runner = new BulkJobService(_provider.GetRequiredService<IServiceScopeFactory>(), Repository,
+                new BulkJobProcessorRegistry([new(MigrationReportExportProcessor.ModuleName, typeof(MigrationReportExportProcessor))]),
+                Stores.Authorization, config, NullLogger<BulkJobService>.Instance);
+        }
+
+        public BulkJob Queue(string? snapshot)
+        {
+            var job = new BulkJob
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                ModuleId = MigrationReportExportProcessor.ModuleName,
+                JobType = MigrationReportExportJobPayload.JobType,
+                Status = BulkJobStatus.Queued,
+                SubmittedBy = "EXAMPLE\\jdoe",
+                SubmittedIp = "10.0.0.9",
+                AuthSnapshotJson = snapshot,
+                PayloadJson = JsonSerializer.Serialize(new MigrationReportExportJobPayload { BatchName = Batch, EmailAddresses = [.. Mailboxes] }),
+                SubmittedAtUtc = DateTime.UtcNow,
+            };
+            Repository.Insert(job);
+            return job;
+        }
+
+        /// <summary>Each refused mailbox's audit row: its target, and the error it was filed with.</summary>
+        public (string? Target, string? Error)[] RefusalAudits() => _log.GetAuditLogPaths(DateTime.Now)
+            .Where(File.Exists).SelectMany(File.ReadAllLines).Select(line =>
+            {
+                using var document = JsonDocument.Parse(line);
+                var e = document.RootElement;
+                Assert.Equal("ExportUserReport", e.GetProperty("action").GetString());
+                Assert.Equal("Failed", e.GetProperty("result").GetString());
+                Assert.Equal("jdoe", e.GetProperty("user").GetString());
+                return (e.GetProperty("target").GetString(), e.GetProperty("error").GetString());
+            }).ToArray();
+
+        public void Dispose()
+        {
+            _provider.Dispose();
+            Stores.Dispose();
+            _temp.Dispose();
+        }
+    }
+
+    [Theory]
+    [InlineData("disabled", Disabled)]
+    [InlineData("access-removed", Denied)]
+    [InlineData("unreadable-enablement", Disabled)]
+    [InlineData("unreadable-sections", Denied)]
+    public async Task Runner_AJobThatMayNoLongerRunAfterItsFirstRow_ReadsNoMoreReports(string mode, string reason)
+    {
+        using var h = new RunnerHarness();
+        var job = h.Queue(h.Stores.Snapshot());
+        var taken = false;
+        h.Runner.JobChanged += id =>
+        {
+            if (taken || h.Repository.Get(id)!.ProcessedRows != 1)
+                return;
+            taken = true;
+            if (mode == "disabled") h.Stores.DisableModule();
+            else if (mode == "access-removed") h.Stores.RemoveAccess();
+            else h.Stores.BreakStore(enablement: mode == "unreadable-enablement");
+        };
+
+        await h.Runner.DrainQueueAsync(TestContext.Current.CancellationToken);
+
+        var done = h.Repository.Get(job.Id)!;
+        var rows = h.Runner.GetRows(job.Id);
+        Assert.True(taken);
+        Assert.Equal((BulkJobStatus.Completed, 3, 1, 2), (done.Status, done.ProcessedRows, done.SuccessCount, done.FailedCount));
+        Assert.StartsWith("Reused the report taken", rows[0].Message, StringComparison.Ordinal);
+        Assert.Equal([reason, reason], rows.Skip(1).Select(row => row.Message));
+        Assert.Equal([("b@x.com", reason), ("c@x.com", reason)], h.RefusalAudits());
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("{not-json")]
+    [InlineData("{\"Section\":\"Migration\",\"RoleClaims\":[\"S-1-5-21-100-200-300-4001\"],\"AuthorizedGroups\":[\"S-1-5-21-100-200-300-4001\"]}")]
+    public async Task Runner_AJobWithNoUsableSnapshot_IsRefusedOnEveryRow(string? snapshot)
+    {
+        using var h = new RunnerHarness();
+        var job = h.Queue(snapshot);
+
+        await h.Runner.DrainQueueAsync(TestContext.Current.CancellationToken);
+
+        var done = h.Repository.Get(job.Id)!;
+        Assert.Equal((BulkJobStatus.Completed, 3, 0, 3), (done.Status, done.ProcessedRows, done.SuccessCount, done.FailedCount));
+        Assert.All(h.Runner.GetRows(job.Id), row => Assert.Equal(Denied, row.Message));
+        Assert.Equal(Mailboxes.Select(mailbox => ((string?)mailbox, (string?)Denied)), h.RefusalAudits());
+    }
+
+    [Fact]
+    public async Task Runner_AnAllowedJob_RunsEveryRow()
+    {
+        using var h = new RunnerHarness();
+        var job = h.Queue(h.Stores.Snapshot());
+
+        await h.Runner.DrainQueueAsync(TestContext.Current.CancellationToken);
+
+        var done = h.Repository.Get(job.Id)!;
+        Assert.Equal((BulkJobStatus.Completed, 3, 3, 0), (done.Status, done.ProcessedRows, done.SuccessCount, done.FailedCount));
+        Assert.All(h.Runner.GetRows(job.Id), row => Assert.StartsWith("Reused the report taken", row.Message, StringComparison.Ordinal));
+        Assert.Empty(h.RefusalAudits());
     }
 
     [Fact]

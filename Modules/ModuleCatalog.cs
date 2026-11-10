@@ -512,7 +512,7 @@ public sealed class ModuleCatalog
             // 1.27.3: a reported time of Kind Local (what the remoting deserializer makes of a time with an offset) is shown as the instant it names; only one that names no zone reads "(time zone not reported)" (sweep-f item 26).
             // 1.27.4: help sweep - its settings' and permissions' help cut to one sentence each, and four two-sentence button tips
             // to one (help is behaviour: Constitution, Code Change Discipline).
-            Version = "1.27.5",
+            Version = "1.27.6",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -614,7 +614,7 @@ public sealed class ModuleCatalog
             // waited its turn and ran first. A read already sent finishes. The leave prompt says so.
             // 1.8.8: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
             // 1.8.9: help sweep - its settings' and permissions' help cut to one sentence each (help is behaviour: Constitution, Code Change Discipline).
-            Version = "1.8.10",
+            Version = "1.8.11",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -917,7 +917,7 @@ public sealed class ModuleCatalog
             // manually identify the affected users". Owner ruling 2026-10-12: an address with no
             // exact match is not a match, so the fix is reporting, NOT widening the lookup keys.
             // 1.4.22: help sweep - the job-delete tip cut from two sentences to one (help is behaviour: Constitution, Code Change Discipline).
-            Version = "1.4.23",
+            Version = "1.4.24",
             MainPermission = new(
                 "Access",
                 "Comms10k",
@@ -1234,7 +1234,7 @@ public sealed class ModuleCatalog
             // directory runspace for all its AD steps (the two preflights, the City/State/Country write, the on-prem room-list add).
             // 2.20.2: help sweep - its settings' help cut to one sentence each, and the job-removal tip to one (help is
             // behaviour: Constitution, Code Change Discipline).
-            Version = "2.20.3",
+            Version = "2.20.4",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

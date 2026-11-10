@@ -45,7 +45,7 @@ public sealed class ConferenceRoomCsvApplyCompletionTests : IDisposable
         _store = new SqliteConnectionFactory(Path.Combine(_h.Dir, $"jobs-{Guid.NewGuid():N}.db"));
         new JobStoreMigrator(_store).Migrate();
         var scopes = new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
-        _jobs = new BulkJobService(scopes, new BulkJobRepository(_store), new BulkJobProcessorRegistry([]), _h.Config,
+        _jobs = new BulkJobService(scopes, new BulkJobRepository(_store), new BulkJobProcessorRegistry([]), new StubJobAuthorization(), _h.Config,
             NullLogger<BulkJobService>.Instance);
     }
 

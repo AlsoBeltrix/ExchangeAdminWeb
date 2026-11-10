@@ -58,7 +58,7 @@ public sealed class MessageTraceReportsDownloadBusyGuardTests : IDisposable
         var jobs = new BulkJobService(
             _provider.GetRequiredService<IServiceScopeFactory>(),
             _repository,
-            new BulkJobProcessorRegistry(Array.Empty<KeyValuePair<string, Type>>()),
+            new BulkJobProcessorRegistry(Array.Empty<KeyValuePair<string, Type>>()), new StubJobAuthorization(),
             config,
             NullLogger<BulkJobService>.Instance);
         _store = new MessageTraceExportStore(config);

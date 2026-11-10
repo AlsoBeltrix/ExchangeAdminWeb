@@ -1818,6 +1818,7 @@
             return;
         }
 
+        operatorPrincipal = user;
         canCreate = (await AuthorizationService.AuthorizeAsync(user, "MigrationCreate")).Succeeded;
         canManage = (await AuthorizationService.AuthorizeAsync(user, "MigrationManage")).Succeeded;
 
@@ -2935,13 +2936,19 @@
     // It runs at MigrationCheck, the permission that already lets an operator read the batch
     // list. Requiring MigrationManage would be a quiet privilege escalation of the page's read
     // surface.
+    //
+    // The job carries a snapshot of the operator's access, taken from the principal this page was
+    // authorized for: the runner has no principal, so it re-checks the snapshot before every mailbox.
+    private System.Security.Claims.ClaimsPrincipal? operatorPrincipal;
+    [Inject] private SectionAccessService SectionAccess { get; set; } = default!;
+
     private void StartReportExport()
     {
         // These two stage nothing, so StageBatchAction never runs and the menu they were clicked
         // from would stay open over the result banner.
         mailboxActionsMenuOpen = false;
 
-        if (IsBusy || expandedBatch == null || selectedMailboxes.Count == 0)
+        if (IsBusy || expandedBatch == null || selectedMailboxes.Count == 0 || operatorPrincipal == null)
             return;
 
         var payload = new ExchangeAdminWeb.Services.Jobs.MigrationReportExportJobPayload
@@ -2965,6 +2972,8 @@
             SubmittedIp = clientIpAddress,
             // No ticket: R31d. A read does not take one.
             Ticket = null,
+            AuthSnapshotJson = ExchangeAdminWeb.Services.Jobs.JobAuthorizationSnapshot.Capture(
+                operatorPrincipal, "MigrationCheck", SectionAccess.GetGroupsForSection("MigrationCheck")).ToJson(),
             PayloadJson = System.Text.Json.JsonSerializer.Serialize(payload),
             SubmittedAtUtc = DateTime.UtcNow,
         };

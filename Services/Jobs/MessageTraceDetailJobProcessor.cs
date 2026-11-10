@@ -49,6 +49,12 @@ public sealed class MessageTraceDetailJobProcessor : IBulkJobProcessor
     /// </summary>
     private readonly ConcurrentDictionary<int, MessageTraceDetail> _fetched = new();
 
+    /// <summary>
+    /// Why the runner refused a row of this job, once it has; null while every row was allowed. A
+    /// job with a refused row produces no export and sends no mail.
+    /// </summary>
+    private string? _refusal;
+
     public string ModuleId => ModuleName;
 
     public MessageTraceDetailJobProcessor(
@@ -91,12 +97,37 @@ public sealed class MessageTraceDetailJobProcessor : IBulkJobProcessor
         return new BulkJobRowOutcome { Target = target, Status = BulkJobRowStatus.Success };
     }
 
+    public BulkJobRowOutcome RefuseRow(BulkJob job, int rowIndex, JobRefusal refusal)
+    {
+        var message = Deserialize(job).Messages![rowIndex];
+        _refusal ??= refusal == JobRefusal.ModuleDisabled
+            ? "Message Analysis is currently disabled."
+            : "Authorization denied.";
+
+        return new BulkJobRowOutcome
+        {
+            Target = string.IsNullOrWhiteSpace(message.MessageId) ? message.MessageTraceId : message.MessageId,
+            Status = BulkJobRowStatus.Failed,
+            Message = _refusal,
+        };
+    }
+
     public async Task OnJobCompletedAsync(BulkJob job)
     {
         // Fail-safe: the runner has already persisted the terminal state and swallows any throw here,
         // so a report/zip/email failure never changes the job result.
         var payload = Deserialize(job);
         var messages = payload.Messages ?? new List<MessageTraceResult>();
+
+        // A job the runner refused delivers nothing, not even the rows fetched before the refusal:
+        // no file, no mail, and a note on the job record so the reports page can say why.
+        if (_refusal is not null)
+        {
+            var refused = $"{MessageTraceExportListing.RefusedMarker}: {_refusal}";
+            MarkJob(job, refused);
+            Audit(job, $"{messages.Count} message(s); {refused}", job.Ticket ?? "");
+            return;
+        }
 
         // Assemble in the operator's selected order from the retained per-row details. A message that
         // was never processed (e.g. the job was cancelled before its row) still appears, with an
@@ -123,7 +154,7 @@ public sealed class MessageTraceDetailJobProcessor : IBulkJobProcessor
             // openreview F1: never a "ready" mail when there is nothing to download. Stamp the job
             // record too, so the reports page can render this as Failed rather than blaming the
             // 30-day retention window for what was actually a write error.
-            MarkSaveFailed(job);
+            MarkJob(job, MessageTraceExportListing.SaveFailedMarker);
             await _email.SendMessageTraceFailureAsync(recipients, messages.Count, ticket, job.SubmittedBy);
         }
         else
@@ -132,7 +163,7 @@ public sealed class MessageTraceDetailJobProcessor : IBulkJobProcessor
                 _exports.ExpiresAtUtc(job.SubmittedAtUtc));
         }
 
-        Audit(job, savedPath, messages.Count, ticket);
+        Audit(job, savedPath is null ? $"{messages.Count} message(s); log save failed" : null, ticket);
     }
 
     /// <summary>
@@ -152,8 +183,8 @@ public sealed class MessageTraceDetailJobProcessor : IBulkJobProcessor
             : EmailService.NormalizeRecipients(payload.Recipients);
 
     /// <summary>
-    /// Records the save failure in the job's own record, which is what the Downloadable Reports page
-    /// reads to distinguish Failed from Expired.
+    /// Records a save failure or a refusal in the job's own record, which is what the Downloadable
+    /// Reports page reads to tell either from Expired.
     ///
     /// Uses the additive <see cref="BulkJobService.AppendJobMessage"/> rather than the terminal
     /// transition: by the time this hook runs the runner has already persisted the terminal state
@@ -161,15 +192,15 @@ public sealed class MessageTraceDetailJobProcessor : IBulkJobProcessor
     /// Fail-safe like everything else in the completion step - the job result never changes because
     /// a note could not be written; the audit event remains the durable record either way.
     /// </summary>
-    private void MarkSaveFailed(BulkJob job)
+    private void MarkJob(BulkJob job, string note)
     {
         try
         {
-            _jobs.AppendJobMessage(job.Id, MessageTraceExportListing.SaveFailedMarker);
+            _jobs.AppendJobMessage(job.Id, note);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Could not record the export save failure on job {Job}", job.Id);
+            _logger.LogError(ex, "Could not record the note {Note} on job {Job}", note, job.Id);
         }
     }
 
@@ -203,15 +234,13 @@ public sealed class MessageTraceDetailJobProcessor : IBulkJobProcessor
         }
     }
 
-    private void Audit(BulkJob job, string? savedPath, int messageCount, string ticket)
+    // One row per job: a success, or a failure saying why no export was delivered.
+    private void Audit(BulkJob job, string? failure, string ticket)
     {
         try
         {
-            var detail = savedPath is null
-                ? $"{messageCount} message(s); log save failed"
-                : $"{messageCount} message(s); saved {savedPath}";
             _audit.LogLookupAction(job.SubmittedBy, job.SubmittedIp, AuditAction,
-                target: $"job {job.Id}", success: savedPath is not null, errorDetail: savedPath is null ? detail : null,
+                target: $"job {job.Id}", success: failure is null, errorDetail: failure,
                 ticketNumber: ticket);
         }
         catch (Exception ex)

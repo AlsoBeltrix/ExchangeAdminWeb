@@ -25,10 +25,11 @@ public interface IBulkJobProcessor
 
     /// <summary>
     /// Processes a single row (0-based <paramref name="rowIndex"/>) of the job and returns its
-    /// durable outcome. The processor performs its own per-row authorization, protected-principal
+    /// durable outcome. The runner has already checked that the job may still run
+    /// (<see cref="IJobAuthorization"/>); the processor performs its own protected-principal
     /// gate, Exchange/AD work, audit and trace - all using the captured submission context on
-    /// <paramref name="job"/> (submitter, ip, ticket, auth snapshot), NOT any ambient circuit,
-    /// which no longer exists off-connection.
+    /// <paramref name="job"/> (submitter, ip, ticket), NOT any ambient circuit, which no longer
+    /// exists off-connection.
     ///
     /// <paramref name="cancellationToken"/> is the cooperative cancel signal. The runner checks it
     /// between rows; a long-running processor may also observe it, but an in-flight Exchange call
@@ -38,6 +39,14 @@ public interface IBulkJobProcessor
     /// row never aborts the batch.
     /// </summary>
     Task<BulkJobRowOutcome> ProcessRowAsync(BulkJob job, int rowIndex, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Called by the runner in place of <see cref="ProcessRowAsync"/> for a row it refused because
+    /// the job may no longer run (<see cref="IJobAuthorization"/>). The decision is the runner's; the
+    /// processor only records it the way its module records a refusal - the audit row and the
+    /// row's outcome - and must do none of the row's work.
+    /// </summary>
+    BulkJobRowOutcome RefuseRow(BulkJob job, int rowIndex, JobRefusal refusal);
 
     /// <summary>
     /// Called once by the runner when a job reaches a terminal state (Completed / Cancelled /

@@ -100,6 +100,13 @@ public class MessageTraceExportListing
     /// </summary>
     public const string SaveFailedMarker = "log save failed";
 
+    /// <summary>
+    /// Marker on a job the runner refused because Message Analysis was disabled or the submitter's
+    /// access was gone: its completion step writes no export. Written and read as
+    /// <see cref="SaveFailedMarker"/> is.
+    /// </summary>
+    public const string RefusedMarker = "export refused";
+
     /// <summary>Refusal text for an empty ticket (openreview F2). Recorded, never validated (D2).</summary>
     public const string TicketRequiredMessage =
         "Enter a ticket number before downloading. It is recorded with the download for audit.";
@@ -280,6 +287,9 @@ public class MessageTraceExportListing
 
         if (SaveFailed(job))
             return MessageTraceExportState.Failed;
+
+        if (job.Message is not null && job.Message.Contains(RefusedMarker, StringComparison.OrdinalIgnoreCase))
+            return MessageTraceExportState.NotProduced;
 
         // An invalid job id is a caller bug, not an expired export. The store throws for it, and
         // this page must not convert that into a misleading "expired" row; GetExports drops the row.

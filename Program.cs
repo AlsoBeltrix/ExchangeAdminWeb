@@ -114,6 +114,7 @@ try
             new(ExchangeAdminWeb.Services.Jobs.Comms10kReplaceProcessor.ModuleName,
                 typeof(ExchangeAdminWeb.Services.Jobs.Comms10kReplaceProcessor)),
         }));
+    builder.Services.AddSingleton<ExchangeAdminWeb.Services.Jobs.IJobAuthorization, ExchangeAdminWeb.Services.Jobs.JobAuthorization>();
     builder.Services.AddSingleton<ExchangeAdminWeb.Services.Jobs.BulkJobService>();
 
     builder.Services.AddSingleton<ModuleEnablementService>();

@@ -198,7 +198,7 @@ status `open`, `done <commit>`, or `declined <reason>`. Names are one line each;
 
 | Item | Name | Status |
 |---|---|---|
-| #1 | Message Trace detail and Migration report export jobs run with no enablement or authorization check | open |
+| #1 | Message Trace detail and Migration report export jobs run with no enablement or authorization check | done on branch 7859d929 |
 | #2 | On-prem message trace narrows to one server silently when the transport-server lookup fails | open |
 | #3 | Three AD `-Filter` strings built by quote-doubling | open |
 | #4 | Attribute legend read returns empty on any failure with no log | open |
@@ -260,7 +260,7 @@ status `open`, `done <commit>`, or `declined <reason>`. Names are one line each;
 | B1 | Ticket box and its gate | open |
 | B2 | Audit rows: refusal shape and result values | open |
 | B3 | Protected-principal check for a cloud (Graph) user | done, merged adfb2a89 |
-| B4 | Authorization of a queued job when it runs | open |
+| B4 | Authorization of a queued job when it runs | done on branch 7859d929 |
 | B5 | Admin and user notifications | open |
 | B6 | Operation trace scopes | open |
 | B7 | Graph client and secret setup | open |

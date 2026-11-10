@@ -133,6 +133,27 @@ public sealed class MigrationReportExportProcessor : IBulkJobProcessor
         }
     }
 
+    public BulkJobRowOutcome RefuseRow(BulkJob job, int rowIndex, JobRefusal refusal)
+    {
+        var email = Parse(job).EmailAddresses[rowIndex];
+        var reason = refusal == JobRefusal.ModuleDisabled
+            ? "Exchange Migration is currently disabled. The report was not fetched."
+            : "Authorization denied. The report was not fetched.";
+
+        try
+        {
+            _audit.LogMigrationAction(
+                job.SubmittedBy, job.SubmittedIp, "ExportUserReport", email,
+                success: false, ticketNumber: job.Ticket ?? "", errorDetail: reason);
+        }
+        catch (Exception auditEx)
+        {
+            _logger.LogWarning(auditEx, "Audit failed for the refused report export of {Email}", email);
+        }
+
+        return new BulkJobRowOutcome { Target = email, Status = BulkJobRowStatus.Failed, Message = reason };
+    }
+
     private static MigrationReportExportJobPayload Parse(BulkJob job) =>
         JsonSerializer.Deserialize<MigrationReportExportJobPayload>(job.PayloadJson)
         ?? throw new InvalidOperationException(

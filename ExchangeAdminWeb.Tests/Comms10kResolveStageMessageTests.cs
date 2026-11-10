@@ -33,7 +33,7 @@ public sealed partial class Comms10kRefusalTests
         var (_, repository) = fixture.JobQueue();
         using var provider = new ServiceCollection().AddScoped(_ => processor).BuildServiceProvider();
         var runner = new BulkJobService(provider.GetRequiredService<IServiceScopeFactory>(), repository,
-            new BulkJobProcessorRegistry([new("Comms10k", typeof(Comms10kReplaceProcessor))]), fixture.Config,
+            new BulkJobProcessorRegistry([new("Comms10k", typeof(Comms10kReplaceProcessor))]), fixture.Authorization, fixture.Config,
             NullLogger<BulkJobService>.Instance);
         var job = C2Job(C2Snapshot(), [new(PersonGuid, PersonDn, Address), new(PersonGuid, PersonDn, alias)]);
         repository.Insert(job);
