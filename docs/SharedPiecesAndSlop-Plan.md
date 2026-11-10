@@ -1,6 +1,6 @@
 # One shared piece per shared behaviour; fix what the audit found; stop the slop at its sources
 
-Status: Approved 2026-11-10 (owner: "approved") - phases 0 to 2 authorised; phases 3, 4 and 5 each need an owner go after the phase before is seen on dev. In progress: phase 0; slice 0.1 merged at adfb2a89, slice 0.2 next.
+Status: Approved 2026-11-10 (owner: "approved") - phases 0 to 2 authorised; phases 3, 4 and 5 each need an owner go after the phase before is seen on dev. In progress: phase 0; slices 0.1 (adfb2a89) and 0.2 (8b0fbb28) merged, slice 0.3 next.
 Owner: Michael
 Last verified against code: `7aa3dd19` / 2026-11-10
 Evidence: `.agents/review/slop-audit-report-2026-11-10.md` (combined report, two Gemini review rounds),
@@ -207,7 +207,7 @@ status `open`, `done <commit>`, or `declined <reason>`. Names are one line each;
 | #7 | MFA Reset passes a null Entra object id to the protection check (bug 8) | done, merged adfb2a89 |
 | #8 | Environment address as a placeholder in MFA Reset | open |
 | #9 | `deploy.ps1 -HybridEndpoint` accepted and ignored | open |
-| G1a | Synced out-of-domain user typed by its primary address is refused (fallback resolve binds by SID only for an alias) | done on branch 9fed5b96 |
+| G1a | Synced out-of-domain user typed by its primary address is refused (fallback resolve binds by SID only for an alias) | done, merged 8b0fbb28 |
 | G1b | Synced out-of-domain user with no Exchange recipient: protection rules not applied by the cloud-user modules | done, merged adfb2a89 |
 | G2 | M365 Groups gate: blank identity and NotFound proceed unchecked; remove checks a string and deletes an id | done, merged adfb2a89 |
 | G3 | Account Lockout: cheap refusals after directory work; `Executed` means "asked to execute" | open |

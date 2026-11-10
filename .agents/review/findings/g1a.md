@@ -3,7 +3,7 @@
 **Severity**: MEDIUM - a wrong refusal, fail-closed. No protection is bypassed: the target was refused as unavailable,
 never let through unchecked. It is a defect because the same recipient typed by an alias resolved, so whether a write
 was allowed depended on which of the recipient's addresses the operator typed.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master at 8b0fbb28 (2026-11-10) on guard proof (MEDIUM, no review round); master gates green (8955 xUnit, 19 warnings, format/diff-check/ASCII clean)
 **Branch**: `fix/p0-2-primary-address-bind` (worktree `D:\source\ExchangeAdminWeb-wt\p0-2`, from master 4d67b81a)
 **Commit**: 9fed5b96 (fix, tests, README), 28c9bc2e (version 2.36.4) | **Implementer**: Claude (supervised agent)
 **Reviewer**: Gemini 4 Argon (High) through agy, two rounds, 2026-11-10; orchestrator triage

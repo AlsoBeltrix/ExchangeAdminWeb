@@ -8,6 +8,15 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 ### 2026-11-07 00:25 - weekend run paused: two blockers only the owner can clear
+### 2026-11-10 - plan slice 0.2 merged (8b0fbb28): synced recipient typed by primary address is bound by SID; 0.3 next
+
+Slice 0.2 (g1a MEDIUM) is on master at 8b0fbb28, not pushed, not deployed. `ResolveWithExchangeFallbackAsync` now
+calls the shared `BindSyncedAsync` for any synced recipient AD does not find by what was typed; app code +22/-74.
+Base 2.36.4. Master gates: 8955 xUnit, 19 warnings, format/diff-check/ASCII clean. Two side effects, both still
+refusals or the plan's wording: a SID two accounts hold now reads "ambiguous" not "unavailable" for the primary
+address too; any synced recipient AD misses by primary address (not only another domain) now resolves. Dev check in
+`.agents/review/findings/g1a.md`. Next: slice 0.3 (job runner enablement and authorisation snapshot).
+
 ### 2026-11-10 - plan slice 0.1 merged (adfb2a89): one protection check for Entra users; slice 0.2 next
 
 `docs/SharedPiecesAndSlop-Plan.md` slice 0.1 (g1b HIGH, g2 MEDIUM, bug 8, pattern B3) is on master at adfb2a89, not
