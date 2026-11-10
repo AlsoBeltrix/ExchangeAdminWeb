@@ -199,6 +199,7 @@ status `open`, `done <commit>`, or `declined <reason>`. Names are one line each;
 | Item | Name | Status |
 |---|---|---|
 | #1 | Message Trace detail and Migration report export jobs run with no enablement or authorization check | done, merged 5896bae9 |
+| #1b | A job that never ran a row (cancelled while queued, interrupted at start-up) delivers at completion with no check (slice 0.3b) | done on branch db21fd3e |
 | #2 | On-prem message trace narrows to one server silently when the transport-server lookup fails | open |
 | #3 | Three AD `-Filter` strings built by quote-doubling | open |
 | #4 | Attribute legend read returns empty on any failure with no log | open |
