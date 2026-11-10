@@ -821,7 +821,7 @@ public sealed class BulkJobService
     {
         try
         {
-            // kd-83. The completion hook is the processor's, so the processor is built for it inside the try: for a job whose
+            // The completion hook is the processor's, so the processor is built for it inside the try: for a job whose
             // processor could not be built it fails again here, and that is a notification failure - logged, never a throw
             // out of the runner's terminal tail.
             var processor = ResolveProcessor(scope, job.ModuleId);
@@ -829,11 +829,29 @@ public sealed class BulkJobService
                 return;
 
             // Fail-safe: a notification failure must never change the (already-persisted) job result.
-            processor.OnJobCompletedAsync(job).GetAwaiter().GetResult();
+            processor.OnJobCompletedAsync(job, CheckAtCompletion(job)).GetAwaiter().GetResult();
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Completion notification for bulk job {Job} failed (non-fatal)", job.Id);
+        }
+    }
+
+    /// <summary>
+    /// Whether the job may still run, asked once more as it ends and handed to the completion hook, so a
+    /// job that never ran a row - and so was never checked - delivers nothing it may no longer deliver.
+    /// A check that throws is a refusal: the hook still runs, and is told the job could not be verified.
+    /// </summary>
+    private JobRefusal? CheckAtCompletion(BulkJob job)
+    {
+        try
+        {
+            return _authorization.Check(job);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Authorization of bulk job {Job} could not be checked as it ended; its completion is told it is refused", job.Id);
+            return JobRefusal.Unverifiable;
         }
     }
 

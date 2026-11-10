@@ -72,7 +72,7 @@ public sealed partial class Comms10kRefusalTests
 
         var refused = await fixture.RowAsync(processor, job, stage);
         var continued = stage == 0 ? await fixture.RowAsync(processor, job, 1) : refused;
-        await processor.OnJobCompletedAsync(job);
+        await processor.OnJobCompletedAsync(job, null);
 
         var reason = mode is "missing" or "malformed" ? C2SnapshotDenied
             : mode is "wrong-section" or "wrong-case" ? C2SectionDenied
@@ -100,7 +100,7 @@ public sealed partial class Comms10kRefusalTests
 
         Assert.Equal(BulkJobRowStatus.Success, (await processor.ProcessRowAsync(job, 0, CancellationToken.None)).Status);
         var row = await processor.ProcessRowAsync(job, 1, CancellationToken.None);
-        await processor.OnJobCompletedAsync(job);
+        await processor.OnJobCompletedAsync(job, null);
 
         Assert.Equal(BulkJobRowStatus.Success, row.Status);
         Assert.Equal([PersonGuid], directory.Actual);
@@ -128,7 +128,7 @@ public sealed partial class Comms10kRefusalTests
         try { C2Revoke(fixture, disableModule); }
         finally { release.TrySetResult(); }
         var row = await pending;
-        await processor.OnJobCompletedAsync(job);
+        await processor.OnJobCompletedAsync(job, null);
 
         C2AssertPreDispatch(fixture, directory, row, disableModule ? C2Disabled : C2GroupDenied);
     }
@@ -154,7 +154,7 @@ public sealed partial class Comms10kRefusalTests
         await processor.ProcessRowAsync(job, 0, CancellationToken.None);
 
         var row = await processor.ProcessRowAsync(job, 1, CancellationToken.None);
-        await processor.OnJobCompletedAsync(job);
+        await processor.OnJobCompletedAsync(job, null);
 
         C2AssertPreDispatch(fixture, directory, row, disableModule ? C2Disabled : C2GroupDenied);
         Assert.Contains("primary", directory.Calls);
@@ -194,7 +194,7 @@ public sealed partial class Comms10kRefusalTests
         await processor.ProcessRowAsync(job, 0, CancellationToken.None);
 
         var row = await processor.ProcessRowAsync(job, 1, CancellationToken.None);
-        await processor.OnJobCompletedAsync(job);
+        await processor.OnJobCompletedAsync(job, null);
 
         var result = Assert.IsType<Comms10kUpdateResult>(fixture.Service.LastResult);
         Assert.True(revoked);
@@ -372,7 +372,7 @@ public sealed partial class Comms10kRefusalTests
         fixture.EnablementRepository.SaveAll(new Dictionary<string, bool> { ["Comms10k"] = true });
 
         var continued = await fixture.RowAsync(processor, job, 1);
-        await processor.OnJobCompletedAsync(job);
+        await processor.OnJobCompletedAsync(job, null);
 
         var reason = disableModule ? C2Disabled : C2GroupDenied;
         Assert.Equal(reason, first.Message);

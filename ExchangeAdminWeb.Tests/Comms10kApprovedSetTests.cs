@@ -62,7 +62,7 @@ public sealed partial class Comms10kRefusalTests
 
         var resolve = await processor.ProcessRowAsync(job, 0, CancellationToken.None);
         var replace = await processor.ProcessRowAsync(job, 1, CancellationToken.None);
-        await processor.OnJobCompletedAsync(job);
+        await processor.OnJobCompletedAsync(job, null);
 
         const string reason = "The approved member fingerprint is missing, malformed or unsupported. Validate the file and resubmit.";
         Assert.Equal(BulkJobRowStatus.Failed, resolve.Status);
@@ -96,7 +96,7 @@ public sealed partial class Comms10kRefusalTests
 
         var resolve = await processor.ProcessRowAsync(job, 0, CancellationToken.None);
         var replace = await processor.ProcessRowAsync(job, 1, CancellationToken.None);
-        await processor.OnJobCompletedAsync(job);
+        await processor.OnJobCompletedAsync(job, null);
 
         var reason = change == "invalid-identity"
             ? "Resolved member identities were invalid. Validate the file and resubmit."
@@ -151,7 +151,7 @@ public sealed partial class Comms10kRefusalTests
 
         await processor.ProcessRowAsync(job, 0, CancellationToken.None);
         var row = await processor.ProcessRowAsync(job, 1, CancellationToken.None);
-        await processor.OnJobCompletedAsync(job);
+        await processor.OnJobCompletedAsync(job, null);
 
         Assert.Equal(BulkJobRowStatus.Failed, row.Status);
         Assert.Empty(directory.Added);
@@ -176,7 +176,7 @@ public sealed partial class Comms10kRefusalTests
 
         Assert.Equal(BulkJobRowStatus.Success, (await processor.ProcessRowAsync(job, 0, CancellationToken.None)).Status);
         var row = await processor.ProcessRowAsync(job, 1, CancellationToken.None);
-        await processor.OnJobCompletedAsync(job);
+        await processor.OnJobCompletedAsync(job, null);
 
         Assert.Equal(BulkJobRowStatus.Success, row.Status);
         Assert.Equal([$"<GUID={PersonGuid:D}>"], directory.Added);
@@ -203,7 +203,7 @@ public sealed partial class Comms10kRefusalTests
         var job = Job();
         await processor.ProcessRowAsync(job, 0, CancellationToken.None);
         var row = await processor.ProcessRowAsync(job, 1, CancellationToken.None);
-        await processor.OnJobCompletedAsync(job);
+        await processor.OnJobCompletedAsync(job, null);
 
         Assert.Equal(BulkJobRowStatus.Partial, row.Status);
         Assert.Contains("COULD NOT CONFIRM", row.Message, StringComparison.Ordinal);
@@ -225,7 +225,7 @@ public sealed partial class Comms10kRefusalTests
         var job = Job();
         await processor.ProcessRowAsync(job, 0, CancellationToken.None);
         var row = await processor.ProcessRowAsync(job, 1, CancellationToken.None);
-        await processor.OnJobCompletedAsync(job);
+        await processor.OnJobCompletedAsync(job, null);
 
         Assert.Equal(BulkJobRowStatus.Partial, row.Status);
         Assert.Contains("PARTLY APPLIED", row.Message, StringComparison.Ordinal);

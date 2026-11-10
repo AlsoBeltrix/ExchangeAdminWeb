@@ -51,7 +51,8 @@ public sealed class MessageTraceDetailJobProcessor : IBulkJobProcessor
 
     /// <summary>
     /// Why the runner refused a row of this job, once it has; null while every row was allowed. A
-    /// job with a refused row produces no export and sends no mail.
+    /// job with a refused row produces no export and sends no mail; nor does one the runner
+    /// refuses as it ends.
     /// </summary>
     private string? _refusal;
 
@@ -100,9 +101,7 @@ public sealed class MessageTraceDetailJobProcessor : IBulkJobProcessor
     public BulkJobRowOutcome RefuseRow(BulkJob job, int rowIndex, JobRefusal refusal)
     {
         var message = Deserialize(job).Messages![rowIndex];
-        _refusal ??= refusal == JobRefusal.ModuleDisabled
-            ? "Message Analysis is currently disabled."
-            : "Authorization denied.";
+        _refusal ??= RefusalText(refusal);
 
         return new BulkJobRowOutcome
         {
@@ -112,18 +111,23 @@ public sealed class MessageTraceDetailJobProcessor : IBulkJobProcessor
         };
     }
 
-    public async Task OnJobCompletedAsync(BulkJob job)
+    private static string RefusalText(JobRefusal refusal) =>
+        refusal == JobRefusal.ModuleDisabled ? "Message Analysis is currently disabled." : "Authorization denied.";
+
+    public async Task OnJobCompletedAsync(BulkJob job, JobRefusal? refusal)
     {
         // Fail-safe: the runner has already persisted the terminal state and swallows any throw here,
         // so a report/zip/email failure never changes the job result.
         var payload = Deserialize(job);
         var messages = payload.Messages ?? new List<MessageTraceResult>();
 
-        // A job the runner refused delivers nothing, not even the rows fetched before the refusal:
+        // A job the runner refused - at a row, or as it ended, which is the only check a job that
+        // never ran a row gets - delivers nothing, not even the rows fetched before the refusal:
         // no file, no mail, and a note on the job record so the reports page can say why.
-        if (_refusal is not null)
+        var refusedBecause = _refusal ?? (refusal is { } atEnd ? RefusalText(atEnd) : null);
+        if (refusedBecause is not null)
         {
-            var refused = $"{MessageTraceExportListing.RefusedMarker}: {_refusal}";
+            var refused = $"{MessageTraceExportListing.RefusedMarker}: {refusedBecause}";
             MarkJob(job, refused);
             Audit(job, $"{messages.Count} message(s); {refused}", job.Ticket ?? "");
             return;
@@ -151,7 +155,7 @@ public sealed class MessageTraceDetailJobProcessor : IBulkJobProcessor
 
         if (savedPath is null)
         {
-            // openreview F1: never a "ready" mail when there is nothing to download. Stamp the job
+            // Never a "ready" mail when there is nothing to download. Stamp the job
             // record too, so the reports page can render this as Failed rather than blaming the
             // 30-day retention window for what was actually a write error.
             MarkJob(job, MessageTraceExportListing.SaveFailedMarker);

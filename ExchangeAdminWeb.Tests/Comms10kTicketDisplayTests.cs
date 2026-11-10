@@ -56,7 +56,7 @@ public sealed partial class Comms10kRefusalTests
         Assert.Equal(BulkJobRowStatus.Success, (await processor.ProcessRowAsync(job, Comms10kReplaceProcessor.ResolveRow, TestContext.Current.CancellationToken)).Status);
         Assert.Equal(BulkJobRowStatus.Success, (await processor.ProcessRowAsync(job, Comms10kReplaceProcessor.ReplaceRow, TestContext.Current.CancellationToken)).Status);
         fixture.AssertAudit(null, Comms10kOutcome.Succeeded, success: true, ticket: expected);
-        await processor.OnJobCompletedAsync(job);
+        await processor.OnJobCompletedAsync(job, null);
         var email = (EmailService)typeof(Page).GetProperty("Email", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page)!;
         var notice = Assert.Single(email.ReceivedCalls(), call => call.GetMethodInfo().Name == "SendAdminNotificationAsync");
         Assert.Equal(expected, notice.GetArguments()[4]);

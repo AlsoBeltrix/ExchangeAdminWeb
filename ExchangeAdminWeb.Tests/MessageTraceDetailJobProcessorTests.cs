@@ -190,7 +190,7 @@ public sealed class MessageTraceDetailJobProcessorTests : IDisposable
 
         await f.Processor.ProcessRowAsync(job, 0, CancellationToken.None);
         await f.Processor.ProcessRowAsync(job, 1, CancellationToken.None);
-        await f.Processor.OnJobCompletedAsync(job);
+        await f.Processor.OnJobCompletedAsync(job, null);
 
         // Saved under <logRoot>\ExchangeAdminWeb\MessageTraceExports\.
         var exportDir = Path.Combine(_tempDir, "ExchangeAdminWeb", "MessageTraceExports");
@@ -218,7 +218,7 @@ public sealed class MessageTraceDetailJobProcessorTests : IDisposable
         var job = MakeJob("user@contoso.com", Message("m1"));
 
         await f.Processor.ProcessRowAsync(job, 0, CancellationToken.None);
-        await f.Processor.OnJobCompletedAsync(job);
+        await f.Processor.OnJobCompletedAsync(job, null);
 
         var expected = f.Store.ExpiresAtUtc(job.SubmittedAtUtc);
         await f.Email.Received(1).SendMessageTraceResultAsync(
@@ -240,7 +240,7 @@ public sealed class MessageTraceDetailJobProcessorTests : IDisposable
         var job = MakeJob("user@contoso.com", ["someone.else@contoso.com", "second@contoso.com"], Message("m1"));
 
         await f.Processor.ProcessRowAsync(job, 0, CancellationToken.None);
-        await f.Processor.OnJobCompletedAsync(job);
+        await f.Processor.OnJobCompletedAsync(job, null);
 
         await f.Email.Received(1).SendMessageTraceResultAsync(
             Arg.Is<IReadOnlyList<string>>(r =>
@@ -261,7 +261,7 @@ public sealed class MessageTraceDetailJobProcessorTests : IDisposable
         var job = MakeJob("user@contoso.com", [], Message("m1"));
 
         await f.Processor.ProcessRowAsync(job, 0, CancellationToken.None);
-        await f.Processor.OnJobCompletedAsync(job);
+        await f.Processor.OnJobCompletedAsync(job, null);
 
         await f.Email.Received(1).SendMessageTraceResultAsync(
             Arg.Is<IReadOnlyList<string>>(r => r.Count == 0), 1, "INC1", "jdoe", Arg.Any<DateTime>());
@@ -282,7 +282,7 @@ public sealed class MessageTraceDetailJobProcessorTests : IDisposable
         var job = MakeJob("user@contoso.com", recipients: null, Message("m1"));
 
         await f.Processor.ProcessRowAsync(job, 0, CancellationToken.None);
-        await f.Processor.OnJobCompletedAsync(job);
+        await f.Processor.OnJobCompletedAsync(job, null);
 
         await f.Email.Received(1).SendMessageTraceResultAsync(
             Arg.Is<IReadOnlyList<string>>(r => r.Count == 1 && r[0] == "user@contoso.com"),
@@ -296,7 +296,7 @@ public sealed class MessageTraceDetailJobProcessorTests : IDisposable
         var job = MakeJob("user@contoso.com", ["someone.else@contoso.com"], Message("m1"));
 
         await f.Processor.ProcessRowAsync(job, 0, CancellationToken.None);
-        await f.Processor.OnJobCompletedAsync(job);
+        await f.Processor.OnJobCompletedAsync(job, null);
 
         await f.Email.Received(1).SendMessageTraceFailureAsync(
             Arg.Is<IReadOnlyList<string>>(r => r.Count == 1 && r[0] == "someone.else@contoso.com"),
@@ -315,7 +315,7 @@ public sealed class MessageTraceDetailJobProcessorTests : IDisposable
 
         await f.Processor.ProcessRowAsync(job, 0, CancellationToken.None);
         await f.Processor.ProcessRowAsync(job, 1, CancellationToken.None);
-        await f.Processor.OnJobCompletedAsync(job);
+        await f.Processor.OnJobCompletedAsync(job, null);
 
         var exportDir = Path.Combine(_tempDir, "ExchangeAdminWeb", "MessageTraceExports");
         var csv = File.ReadAllText(Directory.GetFiles(exportDir, "*.csv").Single());
@@ -351,7 +351,7 @@ public sealed class MessageTraceDetailJobProcessorTests : IDisposable
         var job = MakeJob("user@contoso.com", Message("m1"), Message("m2"));
 
         await f.Processor.ProcessRowAsync(job, 0, CancellationToken.None);
-        await f.Processor.OnJobCompletedAsync(job);
+        await f.Processor.OnJobCompletedAsync(job, null);
 
         // Assert WHICH email was sent. A test that only counts sends passes with the defect present.
         await f.Email.Received(1).SendMessageTraceFailureAsync(
@@ -375,7 +375,7 @@ public sealed class MessageTraceDetailJobProcessorTests : IDisposable
         f.Repository.Insert(job);
 
         await f.Processor.ProcessRowAsync(job, 0, CancellationToken.None);
-        await f.Processor.OnJobCompletedAsync(job);
+        await f.Processor.OnJobCompletedAsync(job, null);
 
         var stored = f.Repository.Get(job.Id);
         Assert.NotNull(stored);
@@ -408,7 +408,7 @@ public sealed class MessageTraceDetailJobProcessorTests : IDisposable
         f.Repository.Insert(job);
 
         await f.Processor.ProcessRowAsync(job, 0, CancellationToken.None);
-        await f.Processor.OnJobCompletedAsync(job);
+        await f.Processor.OnJobCompletedAsync(job, null);
 
         var stored = f.Repository.Get(job.Id);
         Assert.NotNull(stored);
@@ -425,7 +425,7 @@ public sealed class MessageTraceDetailJobProcessorTests : IDisposable
         var job = MakeJob("user@contoso.com", Message("m1"));
 
         await f.Processor.ProcessRowAsync(job, 0, CancellationToken.None);
-        await f.Processor.OnJobCompletedAsync(job);
+        await f.Processor.OnJobCompletedAsync(job, null);
 
         await f.Email.Received(1).SendMessageTraceFailureAsync(
             Arg.Any<IReadOnlyList<string>>(), 1, "INC1", "jdoe");
@@ -440,7 +440,7 @@ public sealed class MessageTraceDetailJobProcessorTests : IDisposable
         f.Repository.Insert(job);
 
         await f.Processor.ProcessRowAsync(job, 0, CancellationToken.None);
-        await f.Processor.OnJobCompletedAsync(job);
+        await f.Processor.OnJobCompletedAsync(job, null);
 
         var stored = f.Repository.Get(job.Id);
         Assert.DoesNotContain(MessageTraceExportListing.SaveFailedMarker, stored!.Message ?? "",
@@ -584,6 +584,124 @@ public sealed class MessageTraceDetailJobProcessorTests : IDisposable
         Assert.Equal((true, null), ExportAudit());
     }
 
+    // -------------------------------------------------------------------------
+    // A job that ends without the runner having run a row of it
+    // -------------------------------------------------------------------------
+
+    private const string CancelledNote = "Cancelled before it started.";
+    private const string InterruptedNote = "Interrupted by application restart.";
+
+    /// <summary>
+    /// Ends a queued job the way named, with no row run: cancelled by its operator while it waits,
+    /// or found unfinished when the application starts. Returns once its completion has been audited,
+    /// which is the last thing a completion does.
+    /// </summary>
+    private async Task EndWithoutRunningARow(BulkJobService runner, BulkJob job, bool atStartUp)
+    {
+        if (atStartUp)
+            runner.InitializeAsync();
+        else
+            Assert.True(runner.CancelJob(job.Id));
+
+        // The start-up completions run off the start-up path, with no handle to await.
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (!ExportAuditFiled() && DateTime.UtcNow < deadline)
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+    }
+
+    private bool ExportAuditFiled()
+    {
+        try
+        {
+            return Directory.EnumerateFiles(_tempDir, "*.jsonl", SearchOption.AllDirectories)
+                .Any(path => File.ReadAllText(path).Contains("\"MessageTrace_DetailExport\"", StringComparison.Ordinal));
+        }
+        catch (IOException)
+        {
+            // The log is being written at this moment; look again.
+            return false;
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Runner_AJobThatNeverRanARow_AndMayStillRun_DeliversItsNotProcessedExport(bool atStartUp)
+    {
+        using var stores = new JobAuthorizationStores("MessageTrace", "MessageTrace");
+        var f = CreateFixture();
+        var runner = Runner(f, stores);
+        var job = QueuedJob(stores.Snapshot());
+        f.Repository.Insert(job);
+
+        await EndWithoutRunningARow(runner, job, atStartUp);
+
+        var done = f.Repository.Get(job.Id)!;
+        Assert.Empty(f.Details.Fetched);
+        Assert.Equal(
+            atStartUp ? (BulkJobStatus.Interrupted, InterruptedNote) : (BulkJobStatus.Cancelled, CancelledNote),
+            (done.Status, done.Message));
+        var rows = File.ReadAllText(Assert.Single(ExportFiles())).Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal(4, rows.Length);
+        Assert.All(rows.Skip(1), row => Assert.Contains("Not processed (job did not reach this message).", row));
+        await f.Email.Received(1).SendMessageTraceResultAsync(
+            Arg.Is<IReadOnlyList<string>>(r => r.Count == 1 && r[0] == "user@contoso.com"), 3, "INC1", "jdoe", Arg.Any<DateTime>());
+        Assert.Equal((true, null), ExportAudit());
+    }
+
+    [Theory]
+    [InlineData(false, "disabled", Disabled)]
+    [InlineData(false, "access-removed", Denied)]
+    [InlineData(false, "no-snapshot", Denied)]
+    [InlineData(true, "disabled", Disabled)]
+    [InlineData(true, "access-removed", Denied)]
+    [InlineData(true, "no-snapshot", Denied)]
+    public async Task Runner_AJobThatNeverRanARow_AndMayNoLongerRun_DeliversNothing(bool atStartUp, string mode, string reason)
+    {
+        using var stores = new JobAuthorizationStores("MessageTrace", "MessageTrace");
+        var f = CreateFixture();
+        var runner = Runner(f, stores);
+        var job = QueuedJob(mode == "no-snapshot" ? null : stores.Snapshot());
+        f.Repository.Insert(job);
+        if (mode == "disabled") stores.DisableModule();
+        else if (mode == "access-removed") stores.RemoveAccess();
+
+        await EndWithoutRunningARow(runner, job, atStartUp);
+
+        var done = f.Repository.Get(job.Id)!;
+        Assert.Empty(f.Details.Fetched);
+        Assert.Equal(atStartUp ? BulkJobStatus.Interrupted : BulkJobStatus.Cancelled, done.Status);
+        Assert.Empty(ExportFiles());
+        await f.Email.DidNotReceiveWithAnyArgs().SendMessageTraceResultAsync(default!, default, default!, default!, default);
+        await f.Email.DidNotReceiveWithAnyArgs().SendMessageTraceFailureAsync(default!, default, default!, default!);
+        var refused = $"{MessageTraceExportListing.RefusedMarker}: {reason}";
+        Assert.Equal($"{(atStartUp ? InterruptedNote : CancelledNote)} {refused}", done.Message);
+        Assert.Equal((false, $"3 message(s); {refused}"), ExportAudit());
+    }
+
+    [Fact]
+    public async Task Runner_AJobAllowedAtEveryRow_AndRefusedAsItEnds_DeliversNothing()
+    {
+        using var stores = new JobAuthorizationStores("MessageTrace", "MessageTrace");
+        var f = CreateFixture();
+        var runner = Runner(f, stores);
+        var job = QueuedJob(stores.Snapshot());
+        f.Repository.Insert(job);
+        // The module is switched off once the last row has been recorded, before the job is finished.
+        runner.JobChanged += id =>
+        {
+            if (f.Repository.Get(id)!.ProcessedRows == 3)
+                stores.DisableModule();
+        };
+
+        await runner.DrainQueueAsync(TestContext.Current.CancellationToken);
+
+        var done = f.Repository.Get(job.Id)!;
+        Assert.Equal(["m1", "m2", "m3"], f.Details.Fetched);
+        Assert.Equal((BulkJobStatus.Completed, 3, 3, 0), (done.Status, done.ProcessedRows, done.SuccessCount, done.FailedCount));
+        await AssertNothingDelivered(f, job, Disabled);
+    }
+
     [Fact]
     public async Task OnJobCompleted_UnprocessedMessage_StillInReport()
     {
@@ -592,7 +710,7 @@ public sealed class MessageTraceDetailJobProcessorTests : IDisposable
 
         // Only the first row runs (e.g. the job was cancelled); the second must still be emitted.
         await f.Processor.ProcessRowAsync(job, 0, CancellationToken.None);
-        await f.Processor.OnJobCompletedAsync(job);
+        await f.Processor.OnJobCompletedAsync(job, null);
 
         var exportDir = Path.Combine(_tempDir, "ExchangeAdminWeb", "MessageTraceExports");
         var csv = File.ReadAllText(Directory.GetFiles(exportDir, "*.csv").Single());
