@@ -256,7 +256,7 @@ public sealed class SettingsPerRowSaveTests : IDisposable
         SettingsPageHarness.Field<List<string>>(page, typeof(ModuleConfigPage), "moduleAdminGroups");
 
     private string[] StoredAdmins() =>
-        new ModuleAdminRepository(TestConfigStore.Create(_h.Root)).GetForModule(Module).Order(StringComparer.Ordinal).ToArray();
+        new ModuleAdminRepository(TestConfigStore.Create(_h.Root)).GetAll().GetValueOrDefault(Module, []).Order(StringComparer.Ordinal).ToArray();
 
     private void SeedAdmins(params string[] groups) =>
         new ModuleAdminRepository(TestConfigStore.Create(_h.Root)).SetForModule(Module, groups);

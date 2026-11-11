@@ -39,6 +39,23 @@ public static class AdSiteSubnetMap
     /// <summary>A subnet parsed into the form matching needs.</summary>
     internal sealed record Parsed(byte[] Network, int PrefixLength, AddressFamily Family, string SiteName);
 
+    internal static IReadOnlyList<Parsed> Prepare(IReadOnlyList<Subnet> subnets,
+        CancellationToken cancellationToken, Action<Subnet>? subnetParsed = null)
+    {
+        ArgumentNullException.ThrowIfNull(subnets);
+        cancellationToken.ThrowIfCancellationRequested();
+        var prepared = new List<Parsed>();
+        foreach (var subnet in subnets)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var parsed = Parse(subnet, subnetParsed);
+            if (parsed is not null)
+                prepared.Add(parsed);
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+        return prepared;
+    }
+
     /// <summary>
     /// The site containing <paramref name="ipAddress"/>, or empty when nothing contains it.
     /// </summary>
@@ -61,32 +78,6 @@ public static class AdSiteSubnetMap
     /// has no site", not the name of some broader subnet's site.
     /// </para>
     /// </remarks>
-    public static string FindSite(string? ipAddress, IReadOnlyList<Subnet> subnets)
-    {
-        ArgumentNullException.ThrowIfNull(subnets);
-        if (!IPAddress.TryParse(ipAddress, out _))
-            return "";
-
-        return FindSiteCancellable(ipAddress, Prepare(subnets, CancellationToken.None), CancellationToken.None);
-    }
-
-    internal static IReadOnlyList<Parsed> Prepare(IReadOnlyList<Subnet> subnets,
-        CancellationToken cancellationToken, Action<Subnet>? subnetParsed = null)
-    {
-        ArgumentNullException.ThrowIfNull(subnets);
-        cancellationToken.ThrowIfCancellationRequested();
-        var prepared = new List<Parsed>();
-        foreach (var subnet in subnets)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var parsed = Parse(subnet, subnetParsed);
-            if (parsed is not null)
-                prepared.Add(parsed);
-        }
-        cancellationToken.ThrowIfCancellationRequested();
-        return prepared;
-    }
-
     internal static string FindSiteCancellable(string? ipAddress, IReadOnlyList<Parsed> subnets,
         CancellationToken cancellationToken)
     {

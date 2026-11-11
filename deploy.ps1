@@ -122,7 +122,7 @@ function Start-AppPoolWithRetry {
 }
 
 function Prompt-Value {
-    param([string]$Name, [string]$Prompt, [string]$Default)
+    param([string]$Prompt, [string]$Default)
     if ($NonInteractive) { return $Default }
     $display = if ($Default) { "$Prompt [$Default]" } else { $Prompt }
     $value = Read-Host -Prompt $display
@@ -646,20 +646,20 @@ if (-not $isUpgrade) {
 
     $requiredParams = @{}
 
-    if (-not $EXOAppId)          { $EXOAppId          = Prompt-Value "EXOAppId"          "Azure App Registration ID (GUID)" }
-    if (-not $EXOOrganization)   { $EXOOrganization   = Prompt-Value "EXOOrganization"   "Exchange Online org (e.g. contoso.onmicrosoft.com)" }
-    if (-not $OnPremServerUri)   { $OnPremServerUri   = Prompt-Value "OnPremServerUri"   "On-prem Exchange PowerShell URI (e.g. http://exch01.domain.com/PowerShell/)" }
-    if (-not $OnPremTargetDomain){ $OnPremTargetDomain = Prompt-Value "OnPremTargetDomain" "On-prem email domain (e.g. yourcompany.com)" }
-    if (-not $DelineaUrl)        { $DelineaUrl        = Prompt-Value "DelineaUrl"        "Delinea Secret Server URL" }
-    if (-not $SmtpHost)          { $SmtpHost          = Prompt-Value "SmtpHost"          "SMTP relay host" }
-    if (-not $AdminEmail)        { $AdminEmail        = Prompt-Value "AdminEmail"        "Admin notification email(s), comma-separated" }
-    if (-not $CloudTargetDomain) { $CloudTargetDomain = Prompt-Value "CloudTargetDomain" "Cloud target delivery domain (e.g. contoso.mail.onmicrosoft.com)" }
+    if (-not $EXOAppId)          { $EXOAppId          = Prompt-Value "Azure App Registration ID (GUID)" }
+    if (-not $EXOOrganization)   { $EXOOrganization   = Prompt-Value "Exchange Online org (e.g. contoso.onmicrosoft.com)" }
+    if (-not $OnPremServerUri)   { $OnPremServerUri   = Prompt-Value "On-prem Exchange PowerShell URI (e.g. http://exch01.domain.com/PowerShell/)" }
+    if (-not $OnPremTargetDomain){ $OnPremTargetDomain = Prompt-Value "On-prem email domain (e.g. yourcompany.com)" }
+    if (-not $DelineaUrl)        { $DelineaUrl        = Prompt-Value "Delinea Secret Server URL" }
+    if (-not $SmtpHost)          { $SmtpHost          = Prompt-Value "SMTP relay host" }
+    if (-not $AdminEmail)        { $AdminEmail        = Prompt-Value "Admin notification email(s), comma-separated" }
+    if (-not $CloudTargetDomain) { $CloudTargetDomain = Prompt-Value "Cloud target delivery domain (e.g. contoso.mail.onmicrosoft.com)" }
     if (-not $AllowedGroups -or $AllowedGroups.Count -eq 0) {
-        $groupInput = Prompt-Value "AllowedGroups" "Authorized AD groups (comma-separated)"
+        $groupInput = Prompt-Value "Authorized AD groups (comma-separated)"
         if ($groupInput) { $AllowedGroups = $groupInput -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ } }
     }
     if (-not $AdminGroups -or $AdminGroups.Count -eq 0) {
-        $adminInput = Prompt-Value "AdminGroups" "Admin settings AD groups (comma-separated, controls /admin-settings access)"
+        $adminInput = Prompt-Value "Admin settings AD groups (comma-separated, controls /admin-settings access)"
         if ($adminInput) { $AdminGroups = $adminInput -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ } }
     }
 
@@ -730,7 +730,7 @@ if ($poolExists) {
         if ($NonInteractive) {
             Write-Fail "ServiceAccount is required for new app pool but not supplied."
         }
-        $ServiceAccount = Prompt-Value "ServiceAccount" "App pool service account (DOMAIN\username)"
+        $ServiceAccount = Prompt-Value "App pool service account (DOMAIN\username)"
         if (-not $ServiceAccount) { Write-Fail "ServiceAccount is required." }
     }
     $needsPassword = $true

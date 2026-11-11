@@ -69,7 +69,7 @@ public sealed class EmergencyDisableSubmittedDisableTests : IDisposable
             new ModuleCredentialService(moduleConfig, delinea, NullLogger<ModuleCredentialService>.Instance),
             moduleConfig,
             _protection = new NobodyProtected(env, config, moduleConfig, TestConfigStore.CreateProtectedPrincipal(_temp.Path), delinea),
-            null!, trace, _audit, null!, delinea, http, env, config, NullLogger<EmergencyDisableService>.Instance);
+            null!, trace, _audit, null!, delinea, http, config, NullLogger<EmergencyDisableService>.Instance);
 
         _authorization.AuthorizeAsync(Arg.Any<ClaimsPrincipal>(), Arg.Any<object?>(), Arg.Any<string>())
             .Returns(Task.FromResult(AuthorizationResult.Success()));

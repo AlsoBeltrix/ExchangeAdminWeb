@@ -863,7 +863,6 @@ public sealed class EventLogUndoRefusalTests : IDisposable
                     owner.Add(label, success, message);
             }
 
-            public IProgress<ActivityUpdate> AsProgress() => new Progress<ActivityUpdate>();
 
             public void Dispose() => Complete(false, "This did not finish.");
         }

@@ -91,7 +91,7 @@ public sealed class M365GroupManagementTicketGateTests : IDisposable
         _audit = new AuditService(log, trace);
         _email = Substitute.For<EmailService>(_config, NullLogger<EmailService>.Instance);
         _groups = new M365GroupManagementService(
-            moduleConfig, delinea, http, trace, _audit, protectedPrincipals, servicers,
+            moduleConfig, delinea, http, protectedPrincipals, servicers,
             NullLogger<M365GroupManagementService>.Instance);
     }
 

@@ -113,7 +113,9 @@ public sealed class ADAttributeEditorPatternTests : IDisposable
         Assert.False(refused.Success);
         Assert.Contains("Job Title", refused.Error, StringComparison.Ordinal);
         Assert.Equal("PatternCheck", Text(Assert.Single(_h.AuditEvents()), "refusedAt"));
-        Assert.True(_h.Allowlist.TryReadAllowlist(out var rows, out _));
+        var snapshot = _h.Allowlist.ReadAllowlistSnapshot();
+        Assert.True(snapshot.Readable);
+        var rows = snapshot.Rows;
         Assert.Equal(stored.Select(a => (a.Name, a.Pattern)), rows.Select(r => (r.Name, r.Pattern)));
     }
 
@@ -127,7 +129,9 @@ public sealed class ADAttributeEditorPatternTests : IDisposable
         var saved = _h.Service.SaveAllowlistAndAudit(edited, view.Version, "EXAMPLE\\allowlist-admin", "10.0.0.9", TestContext.Current.CancellationToken);
 
         Assert.True(saved.Success, saved.Error);
-        Assert.True(_h.Allowlist.TryReadAllowlist(out var rows, out _));
+        var snapshot = _h.Allowlist.ReadAllowlistSnapshot();
+        Assert.True(snapshot.Readable);
+        var rows = snapshot.Rows;
         Assert.Equal("^[A-Z]", Assert.Single(rows, r => r.Name == "title").Pattern);
     }
 }

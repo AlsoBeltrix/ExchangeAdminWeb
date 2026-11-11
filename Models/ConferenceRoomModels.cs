@@ -62,31 +62,6 @@ public static class RoomTypeNames
     }
 }
 
-public class RoomTypeDefinition
-{
-    public RoomType Type { get; init; }
-    public string Label { get; init; } = "";
-    public string Description { get; init; } = "";
-    public bool AllBookInPolicy { get; init; }
-    public string[] BookInPolicyGroups { get; init; } = [];
-    public bool AddAdditionalResponse { get; init; }
-    public string AdditionalResponse { get; init; } = "";
-    public string? MailTip { get; init; }
-    public int BookingWindowInDays { get; init; } = 180;
-    public bool ProcessExternalMeetingMessages { get; init; }
-    public bool ForceRemoveExistingPermissions { get; init; }
-    public string DefaultAccessRights { get; init; } = "LimitedDetails";
-    public string AnonymousAccessRights { get; init; } = "AvailabilityOnly";
-    public CalendarPermissionEntry[] AdditionalPermissions { get; init; } = [];
-}
-
-public class CalendarPermissionEntry
-{
-    public string GroupConfigKey { get; set; } = "";
-    public string FallbackAddress { get; set; } = "";
-    public string AccessRights { get; set; } = "";
-}
-
 public class RoomFinderPreviewRow
 {
     public int RowIndex { get; set; }

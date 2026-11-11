@@ -317,7 +317,7 @@ public sealed class GroupManagementTargetGateTests : IDisposable
         { TargetVerdict = targetVerdict };
 
         return new SeamedService(
-            moduleConfig, moduleCredentials, pp, servicers, NullLogger<GroupManagementService>.Instance)
+            moduleCredentials, pp, servicers, NullLogger<GroupManagementService>.Instance)
         { GroupResolves = groupResolves };
     }
 
@@ -328,10 +328,10 @@ public sealed class GroupManagementTargetGateTests : IDisposable
     /// </summary>
     private sealed class SeamedService : GroupManagementService
     {
-        public SeamedService(ModuleConfigService mc, ModuleCredentialService cred,
+        public SeamedService(ModuleCredentialService cred,
             ProtectedPrincipalService pp, ProtectedPrincipalServicerService servicers,
             Microsoft.Extensions.Logging.ILogger<GroupManagementService> logger)
-            : base(mc, cred, pp, servicers, logger)
+            : base(cred, pp, servicers, logger)
         { }
 
         public bool GroupResolves { get; init; } = true;

@@ -62,7 +62,7 @@ public class GroupManagementServiceTests : IDisposable
         var protectedPrincipals = new ProtectedPrincipalService(env, config, moduleConfig, TestConfigStore.CreateProtectedPrincipal(_tempDir), delinea, Substitute.For<ILogger<ProtectedPrincipalService>>());
 
         return new GroupManagementService(
-            moduleConfig, moduleCredentials, protectedPrincipals, CreateDenyingServicers(config, env),
+            moduleCredentials, protectedPrincipals, CreateDenyingServicers(config, env),
             Substitute.For<ILogger<GroupManagementService>>());
     }
 
@@ -142,7 +142,7 @@ public class GroupManagementServiceTests : IDisposable
         var delinea = new DelineaService(httpClientFactory, config, Substitute.For<ILogger<DelineaService>>(), extLog, trace);
         var moduleCredentials = new ModuleCredentialService(moduleConfig, delinea, Substitute.For<ILogger<ModuleCredentialService>>());
 
-        return new GroupManagementService(moduleConfig, moduleCredentials, pp, CreateDenyingServicers(config, env),
+        return new GroupManagementService(moduleCredentials, pp, CreateDenyingServicers(config, env),
             Substitute.For<ILogger<GroupManagementService>>());
     }
 
@@ -243,9 +243,9 @@ public class GroupManagementServiceTests : IDisposable
     {
         public ResolvedMember Scripted;
 
-        public ScriptedResolverService(ModuleConfigService moduleConfig, ModuleCredentialService creds,
+        public ScriptedResolverService(ModuleCredentialService creds,
             ProtectedPrincipalService pp, ProtectedPrincipalServicerService servicers)
-            : base(moduleConfig, creds, pp, servicers, Substitute.For<ILogger<GroupManagementService>>())
+            : base(creds, pp, servicers, Substitute.For<ILogger<GroupManagementService>>())
         { }
 
         internal override ResolvedMember ResolveMemberForWrite(
@@ -294,7 +294,7 @@ public class GroupManagementServiceTests : IDisposable
         var trace = new OperationTraceService(config, jsonlLog);
         var delinea = new DelineaService(httpClientFactory, config, Substitute.For<ILogger<DelineaService>>(), extLog, trace);
         var moduleCredentials = new ModuleCredentialService(moduleConfig, delinea, Substitute.For<ILogger<ModuleCredentialService>>());
-        return new ScriptedResolverService(moduleConfig, moduleCredentials, pp, CreateDenyingServicers(config, env));
+        return new ScriptedResolverService(moduleCredentials, pp, CreateDenyingServicers(config, env));
     }
 
     [Fact]

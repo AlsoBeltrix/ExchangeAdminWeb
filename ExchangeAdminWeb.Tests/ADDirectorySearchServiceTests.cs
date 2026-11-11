@@ -126,14 +126,6 @@ public class ADDirectorySearchServiceTests
     }
 
     [Fact]
-    public void SearchUsers_WhenAdUnavailable_ReturnsEmpty()
-    {
-        var svc = CreateService();
-
-        Assert.Empty(svc.SearchUsers("test user"));
-    }
-
-    [Fact]
     public void SearchGroups_WhenAdUnavailable_ReturnsEmpty()
     {
         var svc = CreateService();

@@ -32,11 +32,6 @@ public sealed record AttributeLookupResult(
 
 public sealed record AttributeChange(string Name, string Label, string? OldValue, string? NewValue);
 
-public sealed record AttributeSavePreview(
-    bool Success,
-    string? Error,
-    List<AttributeChange>? Changes);
-
 public sealed record AttributeLegendEntry(string Description, string? Note = null, string? Source = null);
 
 public sealed record AttributeSaveResult(
@@ -226,8 +221,8 @@ public class ADAttributeEditorService
         // Only cache a successful load. A corrupt store (null) is never cached, so a
         // file that became corrupt is re-read on every call rather than masked by a
         // stale entry - but a valid load that is later followed by on-disk corruption
-        // is still served from cache for the TTL, which is why the pre-save gate must
-        // use IsAllowlistCorrupt (disk-fresh), not GetAllowlist (cached).
+        // is still served from cache for the TTL, which is why the save
+        // judges the rows its own write reads, not GetAllowlist (cached).
         if (loaded != null)
         {
             lock (_allowlistLock)
@@ -239,16 +234,6 @@ public class ADAttributeEditorService
         }
         return loaded;
     }
-
-    /// <summary>
-    /// True when the allowlist in the config database (<c>editable_attribute</c>) cannot be read or
-    /// fails validation, or when the legacy import refused its file (aud-a26f). Reads the store
-    /// fresh on every call - it does NOT consult the 30-second cache - because GetAllowlist() can
-    /// return a stale-but-valid cached list for up to the TTL after the store becomes corrupt.
-    /// Mirrors SectionAccessService.IsFragmentCorrupt (incident 2026-06-12 corrupt-store class). The
-    /// allowlist save no longer calls this: it decides inside its own write (aud-a28i).
-    /// </summary>
-    public bool IsAllowlistCorrupt() => LoadAllowlistFromDisk() == null;
 
     /// <summary>
     /// Reads and validates the allowlist from the store with no caching. Returns an empty list
@@ -994,8 +979,7 @@ public class ADAttributeEditorService
     }
 
     /// <summary>
-    /// The runspace the lookup, save and preview paths open (PerformLookup, PerformSave, and since aud-a26o
-    /// ReReadCurrentValues).
+    /// The runspace the lookup and save paths open (PerformLookup, PerformSave).
     /// </summary>
     /// <remarks>
     /// Internal virtual as a TEST SEAM, the shape of <c>Comms10kService.CreateReplaceRunspace</c>:
@@ -1011,7 +995,7 @@ public class ADAttributeEditorService
     }
 
     /// <summary>
-    /// This module's AD credential, for the lookup, save and (since aud-a26o) preview paths.
+    /// This module's AD credential, for the lookup and save paths.
     /// </summary>
     /// <remarks>
     /// Internal virtual as a TEST SEAM, like <c>GroupManagementService.GetCredentialsAsync</c>:
@@ -1040,35 +1024,6 @@ public class ADAttributeEditorService
         try
         {
             return await Task.Run(() => PerformLookup(identity, creds.Value, allowlist));
-        }
-        finally
-        {
-            _adThrottle.Release();
-        }
-    }
-
-    public async Task<AttributeSavePreview> PreviewAsync(ResolvedDirectoryPrincipal target, Dictionary<string, string?> proposedValues)
-    {
-        var allowlist = GetAllowlist();
-        if (allowlist == null)
-            return new(false, "Attribute allowlist configuration is corrupt.", null);
-
-        var validationError = ValidateProposedValues(proposedValues, allowlist);
-        if (validationError != null)
-            return new(false, validationError, null);
-
-        // aud-a26o: through the credential seam the lookup and the save use. Fetched from the module's credential
-        // service directly, the preview was out of every test's reach, its re-read untested.
-        var creds = await GetCredentialsAsync("attribute preview");
-        if (creds == null)
-            return new(false, "AD credentials unavailable.", null);
-
-        if (!await _adThrottle.WaitAsync(TimeSpan.FromMinutes(2)))
-            return new(false, "AD service is busy.", null);
-
-        try
-        {
-            return await Task.Run(() => ComputePreview(target, proposedValues, creds.Value, allowlist));
         }
         finally
         {
@@ -1348,7 +1303,7 @@ public class ADAttributeEditorService
             EntraObjectId: null,
             ObjectSid: ProtectedPrincipalService.ObjectSidOf(adUser));
 
-        // aud-a26r. Each value is read as the save, the preview and the read-back read it (ReadDirectoryValue). By ToString
+        // Each value is read as the save and the read-back read it (ReadDirectoryValue). By ToString
         // a one-element collection was its type's name, in the form and in both undo conflict checks, which compare the
         // lookup's reading with the element the save's record holds - so an edit of such an attribute could never be
         // undone. Several values read as their join, a binary value as "binary (N bytes)".
@@ -1370,22 +1325,6 @@ public class ADAttributeEditorService
     /// <summary>Each failed search base with its reason, for the operator's message and the log (psl-6).</summary>
     private static string DescribeFailedBases(IEnumerable<(string SearchBase, string Reason)> failedBases) =>
         string.Join("; ", failedBases.Select(f => $"search base '{f.SearchBase}' failed ({f.Reason})"));
-
-    private AttributeSavePreview ComputePreview(
-        ResolvedDirectoryPrincipal target,
-        Dictionary<string, string?> proposedValues,
-        (string username, string password, string domain) creds,
-        List<EditableAttribute> allowlist)
-    {
-        var (currentValues, refusal) = ReReadCurrentValues(target, proposedValues, creds, allowlist);
-        if (refusal != null)
-            return new(false, refusal, null);
-        if (currentValues == null)
-            return new(false, "Failed to re-read target object for preview.", null);
-
-        var changes = ComputeChanges(proposedValues, currentValues, allowlist);
-        return new(true, null, changes);
-    }
 
     private AttributeSaveResult PerformSave(
         ResolvedDirectoryPrincipal target,
@@ -2034,10 +1973,10 @@ public class ADAttributeEditorService
     // is private - since aud-a26l the value itself rather than its text, so its type can say its syntax.
     // *Assumption, not probed*: the module answers one with its value, as this service's own reads take it
     // (Properties[..].Value). A collection is taken as its one element, so a collection-shaped answer is not
-    // told as a difference; several values, joined, are not the one written. Since aud-a26o the re-reads before
-    // a save and for a preview read through it too, so a value is compared before the write as after it; since
+    // told as a difference; several values, joined, are not the one written. The re-read before
+    // a save reads through it too, so a value is compared before the write as after it; since
     // aud-a26r the lookup does, and a binary value is named "binary (N bytes)" rather than returned - nothing compares
-    // one, the refusal stopping a save or preview of a binary attribute first, and its ToString is its type's name.
+    // one, the refusal stopping a save of a binary attribute first, and its ToString is its type's name.
     private static object? ReadDirectoryValue(PSObject read, string name)
     {
         var items = DirectoryValues(read, name);
@@ -2079,7 +2018,7 @@ public class ADAttributeEditorService
         return current;
     }
 
-    // aud-a26o, aud-a26r. The refusal of a save or preview that would write an attribute that is not one text value,
+    // The refusal of a save that would write an attribute that is not one text value,
     // naming each under its own rule - several values (the editor writes single-valued attributes only) or a binary
     // value (it writes text attributes only) - or null. Only the attributes proposed count: one the save does not write
     // may hold what it holds. *Assumption, not probed*: the module answers an attribute holding several values with a
@@ -2121,7 +2060,7 @@ public class ADAttributeEditorService
     // and what it holds, in the words the refusal and the read-only mark both use.
     private readonly record struct NotText(bool Binary, string Holds);
 
-    // aud-a26u. One reading for the save's and the preview's refusal and the lookup's read-only mark. Binary is checked
+    // One reading for the save's refusal and the lookup's read-only mark. Binary is checked
     // first, and several values that are all byte arrays are binary: counted as several before their elements were
     // looked at, they were refused under the single-valued rule, while the editor writes binary values in no number.
     private static NotText? NotSingleText(PSObject read, string name)
@@ -2140,62 +2079,6 @@ public class ADAttributeEditorService
     private static string RuleFor(NotText notText) => notText.Binary ? TextOnlyRule : SingleValuedRule;
 
     private static object? Unwrapped(object? value) => value is PSObject wrapped ? wrapped.BaseObject : value;
-
-    // aud-a26o. The preview's re-read asks what the save's asks, where the save asks it: through the session seam
-    // (CreateDirectoryRunspace), so it can be tested, and with the save's -Server - the object's own domain, from its
-    // DN (aud-a26l) - so another domain controller than the save's cannot answer it. It opened its own session and
-    // sent no -Server. A DN naming no domain goes unrouted, as the save's chain does, and says so. The values come back
-    // as read, or the save's refusal of an attribute that is not one text value.
-    private (Dictionary<string, object?>? Current, string? Refusal) ReReadCurrentValues(
-        ResolvedDirectoryPrincipal target,
-        Dictionary<string, string?> proposedValues,
-        (string username, string password, string domain) creds,
-        List<EditableAttribute> allowlist)
-    {
-        var server = GroupManagementService.ServerFromDn(target.DistinguishedName);
-        if (server is null)
-        {
-            _logger.LogWarning(
-                "AD attribute preview for {Target}: its distinguished name names no domain, so the re-read goes to the default domain controller",
-                target.UserPrincipalName);
-        }
-
-        try
-        {
-            using var runspace = CreateDirectoryRunspace();
-            runspace.Open();
-            using var ps = PowerShell.Create();
-            ps.Runspace = runspace;
-
-            ActiveDirectoryModuleImport.Import(ps);
-
-            var credential = CreateCredential(creds.username, creds.password, creds.domain);
-
-            ps.AddCommand("Get-ADUser")
-              .AddParameter("Identity", target.DistinguishedName)
-              .AddParameter("Properties", GetPropertiesToLoad(allowlist))
-              .AddParameter("Credential", credential)
-              .AddParameter("ErrorAction", "Stop");
-            if (server is not null)
-                ps.AddParameter("Server", server);
-            var result = ps.Invoke();
-            ps.Commands.Clear();
-
-            if (result.Count == 0) return (null, null);
-
-            var reReadDn = result[0].Properties["DistinguishedName"]?.Value?.ToString();
-            if (!IsWithinSearchBases(reReadDn, GetConfiguredSearchBases()))
-                return (null, null);
-
-            var refusal = NotSingleTextRefusal(result[0], proposedValues, allowlist);
-            return refusal is null ? (CurrentValues(result[0], allowlist), null) : (null, refusal);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to re-read current values for {Target}", target.UserPrincipalName);
-            return (null, null);
-        }
-    }
 
     // aud-a26o. A proposed value is a change only when the read-back would not confirm it as written: compared in the
     // attribute's own syntax (aud-a26l's SyntaxOf and ReadsAsWritten), on the value as read. Compared ordinal, an edit

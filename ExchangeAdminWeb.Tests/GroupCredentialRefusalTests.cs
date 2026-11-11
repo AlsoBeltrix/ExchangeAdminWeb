@@ -139,7 +139,7 @@ public sealed class GroupCredentialRefusalTests : IDisposable
                 Assert.StartsWith("Not attempted - ", reason, StringComparison.Ordinal);
                 return reason["Not attempted - ".Length..];
             case "group search":
-                var groups = new GroupManagementService(moduleConfig, credentials, null!, null!, NullLogger<GroupManagementService>.Instance);
+                var groups = new GroupManagementService(credentials, null!, null!, NullLogger<GroupManagementService>.Instance);
                 return (await Assert.ThrowsAsync<InvalidOperationException>(() => groups.SearchGroupsAsync("Finance"))).Message;
             default:
                 throw new ArgumentOutOfRangeException(nameof(path), path, null);

@@ -123,12 +123,6 @@ public sealed class AuthorizationGroupInventory
         return new AuthorizationInventory(grants, unrevalidatable);
     }
 
-    /// <summary>The distinct SIDs of <see cref="Read"/>: what the directory comparison is about.</summary>
-    /// <exception cref="DirectoryUnavailableException">A configured group name could not be translated.</exception>
-    /// <exception cref="InvalidOperationException">A grant store could not be read.</exception>
-    public IReadOnlySet<string> GetConsultedSids() =>
-        Read().Grants.Select(grant => grant.Sid).ToHashSet(StringComparer.OrdinalIgnoreCase);
-
     // The SIDs a static list grants through: SID values as they are (canonical form when padded),
     // names translated the way IsInRole translates them. Usable domain SIDs are grants; anything else
     // that resolves to a SID can still grant through IsInRole, so it goes to Unrevalidatable rather

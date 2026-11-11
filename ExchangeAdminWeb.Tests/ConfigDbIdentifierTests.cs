@@ -455,7 +455,7 @@ public sealed class ConfigDbIdentifierTests : IDisposable
 
     private void SeedAdmins(string moduleId, params string[] grants) => new ModuleAdminRepository(_store).SetForModule(moduleId, grants);
 
-    private string[] Admins(string moduleId) => new ModuleAdminRepository(_store).GetForModule(moduleId);
+    private string[] Admins(string moduleId) => new ModuleAdminRepository(_store).GetAll().GetValueOrDefault(moduleId, []);
 
     private ProtectedPrincipalData ReadRules()
     {

@@ -308,7 +308,7 @@ public sealed class CloudUserProtectionCallerTests : IDisposable
     // ----- fixtures -----
 
     private M365GroupManagementService M365(StandInGraph graph) =>
-        new(_moduleConfig, _delinea, _http, _h.Trace, _audit, _protection, _servicers, NullLogger<M365GroupManagementService>.Instance)
+        new(_moduleConfig, _delinea, _http, _protection, _servicers, NullLogger<M365GroupManagementService>.Instance)
         {
             GraphClientForTests = () => new GraphTokenClient("tenant", "client", "secret", new HttpClient(graph, disposeHandler: false)),
         };

@@ -22,6 +22,4 @@ public sealed class BulkJobProcessorRegistry
     /// <summary>The processor implementation type for a module id, or null if none is registered.</summary>
     public Type? GetProcessorType(string moduleId) =>
         _byModuleId.TryGetValue(moduleId, out var type) ? type : null;
-
-    public bool IsRegistered(string moduleId) => _byModuleId.ContainsKey(moduleId);
 }

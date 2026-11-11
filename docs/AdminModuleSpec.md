@@ -48,7 +48,6 @@ splits the value at, so the editor and Verify treat each entry on its own.
 | `Text` (default) | text box | anything |
 | `Boolean` | checkbox, writes exactly `true` / `false` | a switch (owner ruling 2026-09-01) |
 | `AdGroup` | single value: the group search; a list (`ListSeparator`): a text box, since a pick would replace the list | AD group identities |
-| `AdUser` | text box | an AD user |
 | `OU` | text box with the OU browser | the DN of an organizational unit, never another container |
 | `SearchBase` | text box with the OU browser; any container may be typed | the DN a directory search starts at - an OU, a container or a domain root |
 | `RecipientGroup` | text box | the address of an Exchange group |

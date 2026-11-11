@@ -9,8 +9,6 @@ public class M365GroupManagementService
     private readonly ModuleConfigService _moduleConfig;
     private readonly DelineaService _delineaService;
     private readonly IHttpClientFactory _httpClientFactory;
-    private readonly OperationTraceService _operationTrace;
-    private readonly AuditService _audit;
     private readonly ProtectedPrincipalService _protectedPrincipals;
     private readonly ProtectedPrincipalServicerService _servicers;
 
@@ -21,8 +19,6 @@ public class M365GroupManagementService
         ModuleConfigService moduleConfig,
         DelineaService delineaService,
         IHttpClientFactory httpClientFactory,
-        OperationTraceService operationTrace,
-        AuditService audit,
         ProtectedPrincipalService protectedPrincipals,
         ProtectedPrincipalServicerService servicers,
         ILogger<M365GroupManagementService> logger)
@@ -30,8 +26,6 @@ public class M365GroupManagementService
         _moduleConfig = moduleConfig;
         _delineaService = delineaService;
         _httpClientFactory = httpClientFactory;
-        _operationTrace = operationTrace;
-        _audit = audit;
         _protectedPrincipals = protectedPrincipals;
         _servicers = servicers;
         _logger = logger;

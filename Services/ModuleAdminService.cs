@@ -63,31 +63,15 @@ public class ModuleAdminService
 
     /// <summary>
     /// Stored module-admin grants that are not usable group SIDs, by module. Empty once the store
-    /// is migrated.
-    /// </summary>
-    /// <remarks>
-    /// These grants authorize NOTHING - see <see cref="IsModuleAdmin"/>. This exists so that fact
-    /// is reportable before anyone is surprised by it, rather than discovered when an admin cannot
-    /// open their own module. Read through <see cref="TryGetUnusableGrants"/> by the Module
-    /// Configuration page (its list of grants stored by name), ppi-s5 and ppi-s6.
-    /// </remarks>
-    public IReadOnlyDictionary<string, string[]> GetUnusableGrants()
-        => TryGetUnusableGrants(out var unusable)
-            ? unusable
-            : throw new InvalidOperationException(
-                "Module-admin grants could not be read, so the unusable-grant inventory is unknown. "
-                + "Do not treat this as an empty result.");
-
-    /// <summary>
-    /// Stored module-admin grants that are not usable group SIDs, by module.
-    /// Returns false when the store could not be read - in which case
+    /// is migrated. Returns false when the store could not be read - in which case
     /// <paramref name="unusableGrants"/> is empty and means NOTHING.
     /// </summary>
     /// <remarks>
-    /// The out-parameter shape is the finding. This inventory is the deployment check for
-    /// aud-a1, and a swallowed read error previously made it report zero unusable grants -
-    /// the same answer as a fully migrated store. A report that cannot fail visibly is not a
-    /// check. <see cref="GetUnusableGrants"/> throws rather than returning the ambiguous value.
+    /// These grants authorize nothing - see <see cref="IsModuleAdmin"/> - and the Module
+    /// Configuration page lists them so that is reportable before an admin cannot open their own
+    /// module. The out-parameter shape matters: a swallowed read error would report zero unusable
+    /// grants, the same answer as a fully migrated store, and a report that cannot fail visibly is
+    /// not a check.
     /// </remarks>
     public bool TryGetUnusableGrants(out IReadOnlyDictionary<string, string[]> unusableGrants)
     {
@@ -108,12 +92,6 @@ public class ModuleAdminService
         }
 
         return true;
-    }
-
-    public bool IsModuleAdminForAny(ClaimsPrincipal user)
-    {
-        var allAdmins = ReadConfig();
-        return allAdmins.Any(kvp => kvp.Value.Length > 0 && IsModuleAdmin(kvp.Key, user));
     }
 
     public string[] GetModuleAdmins(string moduleId)

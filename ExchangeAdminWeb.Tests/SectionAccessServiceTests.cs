@@ -225,7 +225,7 @@ public class SectionAccessServiceTests : IDisposable
         };
 
         var outcome = service.SaveEditedAliases(Loaded(service, "MailboxPermissions", "CalendarPermissions"), data, TestContext.Current.CancellationToken);
-        var result = service.GetSectionAccess();
+        Assert.True(service.TryGetSectionAccess(out var result, out _));
 
         Assert.Equal(SectionAccessSaveStatus.Saved, outcome.Status);
         Assert.Equal(new[] { "GroupA", "GroupB" }, result["MailboxPermissions"].Order());
@@ -244,7 +244,7 @@ public class SectionAccessServiceTests : IDisposable
             new Dictionary<string, string[]> { ["MailboxPermissions"] = new[] { "A" } },
             new Dictionary<string, string[]> { ["MailboxPermissions"] = new[] { "C" } }, TestContext.Current.CancellationToken);
 
-        var result = service.GetSectionAccess();
+        Assert.True(service.TryGetSectionAccess(out var result, out _));
         Assert.Equal(SectionAccessSaveStatus.Saved, outcome.Status);
         Assert.Equal(new[] { "C" }, result["MailboxPermissions"]);
         Assert.Equal(new[] { "B" }, result["CalendarPermissions"]);

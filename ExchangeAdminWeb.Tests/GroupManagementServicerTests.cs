@@ -168,7 +168,7 @@ public sealed class GroupManagementServicerTests : IDisposable
         var pp = new ProtectedFakePpService(env, config, moduleConfig, TestConfigStore.CreateProtectedPrincipal(_tempDir), delinea);
 
         return new GroupManagementService(
-            moduleConfig, moduleCredentials, pp, servicers, NullLogger<GroupManagementService>.Instance);
+            moduleCredentials, pp, servicers, NullLogger<GroupManagementService>.Instance);
     }
 
     /// <summary>Resolves any identity and reports it protected, so the servicer path is reachable.</summary>

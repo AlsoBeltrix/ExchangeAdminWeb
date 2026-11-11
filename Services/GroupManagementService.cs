@@ -7,7 +7,6 @@ namespace ExchangeAdminWeb.Services;
 
 public class GroupManagementService
 {
-    private readonly ModuleConfigService _moduleConfig;
     private readonly ModuleCredentialService _moduleCredentials;
     private readonly ProtectedPrincipalService _protectedPrincipals;
     private readonly ProtectedPrincipalServicerService _servicers;
@@ -18,13 +17,11 @@ public class GroupManagementService
     private static readonly SemaphoreSlim _adThrottle = new(2, 2);
 
     public GroupManagementService(
-        ModuleConfigService moduleConfig,
         ModuleCredentialService moduleCredentials,
         ProtectedPrincipalService protectedPrincipals,
         ProtectedPrincipalServicerService servicers,
         ILogger<GroupManagementService> logger)
     {
-        _moduleConfig = moduleConfig;
         _moduleCredentials = moduleCredentials;
         _protectedPrincipals = protectedPrincipals;
         _servicers = servicers;

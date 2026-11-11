@@ -241,7 +241,7 @@ public sealed class Comms10kInterruptionTests
             typeof(DelineaService).GetField("_apiKey", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(delinea, "test-key");
             var credentials = new ModuleCredentialService(moduleConfig, delinea, NullLogger<ModuleCredentialService>.Instance);
             Directory = new LocalDirectory(mode);
-            Service = new TestService(ServiceLog, moduleConfig, credentials, config, Directory);
+            Service = new TestService(ServiceLog, moduleConfig, credentials, Directory);
 
             var factory = new SqliteConnectionFactory(Path.Combine(_temp.Path, "exchangeadmin-jobs.db"));
             new JobStoreMigrator(factory).Migrate();
@@ -352,8 +352,8 @@ public sealed class Comms10kInterruptionTests
     }
 
     private sealed class TestService(ILogger<Comms10kService> logger, ModuleConfigService config,
-        ModuleCredentialService credentials, IConfiguration settings, LocalDirectory directory)
-        : Comms10kService(logger, config, credentials, settings)
+        ModuleCredentialService credentials, LocalDirectory directory)
+        : Comms10kService(logger, config, credentials)
     {
         public int Resolutions { get; private set; }
         public Comms10kUpdateResult? LastResult { get; private set; }

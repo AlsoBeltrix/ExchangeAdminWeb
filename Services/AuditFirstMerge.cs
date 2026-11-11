@@ -17,21 +17,13 @@ namespace ExchangeAdminWeb.Services;
 public static class AuditFirstMerge
 {
     /// <summary>
-    /// Every audit record, plus the newest diagnostics that fit in the remaining room, sorted
-    /// newest first.
-    /// </summary>
-    /// <remarks>
-    /// Audit records are never dropped to make space for a diagnostic. They can still exceed
-    /// the cap on their own - that is a real truncation and the caller warns about it - but
-    /// what gets dropped then is the oldest audit, not an arbitrary one displaced by a trace.
-    /// </remarks>
-    /// <summary>
     /// The diagnostics that fit after every audit record has taken its place, newest first.
     /// </summary>
     /// <remarks>
-    /// Separate from <see cref="Merge"/> so the caller can report how many were dropped.
-    /// Review of A20: the page's truncation warning described the old single-buffer
-    /// behaviour, and an operator needs to know WHICH kind of entry went missing.
+    /// Audit records are never dropped to make space for a diagnostic. They can still exceed
+    /// the cap on their own - a real truncation the caller warns about - and the caller can
+    /// report how many diagnostics were dropped, so an operator knows WHICH kind of entry went
+    /// missing.
     /// </remarks>
     public static List<T> FitDiagnostics<T, TKey>(
         int auditCount,
@@ -40,19 +32,4 @@ public static class AuditFirstMerge
         Func<T, TKey> timestamp)
         where TKey : IComparable<TKey> =>
         diagnostics.OrderByDescending(timestamp).Take(Math.Max(0, cap - auditCount)).ToList();
-
-    public static List<T> Merge<T, TKey>(
-        IReadOnlyCollection<T> audit,
-        IReadOnlyCollection<T> diagnostics,
-        int cap,
-        Func<T, TKey> timestamp)
-        where TKey : IComparable<TKey>
-    {
-        var room = Math.Max(0, cap - audit.Count);
-
-        return audit
-            .Concat(diagnostics.OrderByDescending(timestamp).Take(room))
-            .OrderByDescending(timestamp)
-            .ToList();
-    }
 }

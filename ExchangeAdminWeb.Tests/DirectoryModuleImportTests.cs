@@ -183,7 +183,7 @@ public sealed class DirectoryModuleImportTests : IDisposable
 
     /// <summary>The service with only its directory session replaced.</summary>
     private sealed class StandInGroups(Func<Runspace> open)
-        : GroupManagementService(null!, null!, null!, null!, NullLogger<GroupManagementService>.Instance)
+        : GroupManagementService(null!, null!, null!, NullLogger<GroupManagementService>.Instance)
     {
         internal override Runspace CreateDirectoryRunspace() => open();
     }
@@ -436,7 +436,7 @@ public sealed class DirectoryModuleImportTests : IDisposable
 
     /// <summary>The service with only its directory session replaced; its trace disabled.</summary>
     private sealed class StandInEmergencyDisable(Func<Runspace> open, OperationTraceService trace)
-        : EmergencyDisableService(null!, null!, null!, null!, trace, null!, null!, null!, null!, null!, null!,
+        : EmergencyDisableService(null!, null!, null!, null!, trace, null!, null!, null!, null!, null!,
             NullLogger<EmergencyDisableService>.Instance)
     {
         internal override Runspace CreateDirectoryRunspace() => open();

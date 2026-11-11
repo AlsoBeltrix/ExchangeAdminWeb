@@ -205,7 +205,6 @@ public sealed record ProtectedGroupTargetEntry(string? ObjectGuid, string? Disti
 
 public class ProtectedPrincipalService : IVerifyDirectoryAccess
 {
-    private readonly IWebHostEnvironment _env;
     private readonly IConfiguration _config;
     private readonly ModuleConfigService _moduleConfig;
     private readonly ProtectedPrincipalRepository _repository;
@@ -355,7 +354,6 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
         IOnPremisesSidSource? onPremisesSidSource = null)
     {
         OnPremisesSidSource = onPremisesSidSource;
-        _env = env;
         _config = config;
         _moduleConfig = moduleConfig;
         _repository = repository;
@@ -819,16 +817,6 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
                 return (null, ResolutionStatus.Unavailable);
             }
         }
-    }
-
-    /// <summary>
-    /// Legacy wrapper - returns null for both NotFound and Unavailable.
-    /// Prefer ResolveWithStatusAsync for new code.
-    /// </summary>
-    public async Task<ResolvedDirectoryPrincipal?> ResolveDirectoryPrincipalAsync(string identity)
-    {
-        var (principal, _) = await ResolveWithStatusAsync(identity);
-        return principal;
     }
 
     /// <summary>
@@ -2444,42 +2432,6 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
         if (candidateDns.Count != 1 || string.IsNullOrWhiteSpace(candidateDns[0]))
             return (null, true);
         return (candidateDns[0], false);
-    }
-
-    /// <summary>
-    /// Matches a Distinguished Name from expandedGroups against a protectedGroup config value.
-    /// Supports three formats:
-    /// - Full DN (contains "DC=" or "CN="): compare full DN case-insensitively
-    /// - DOMAIN\GroupName: extract name after backslash, compare against CN extracted from DN
-    /// - Simple name: extract CN from DN and compare case-insensitively
-    /// </summary>
-    internal static bool MatchesDnToProtectedGroup(string groupDn, string protectedGroup)
-    {
-        if (string.IsNullOrEmpty(groupDn) || string.IsNullOrEmpty(protectedGroup))
-            return false;
-
-        // If protectedGroup looks like a DN, compare full DN
-        if (protectedGroup.Contains("DC=", StringComparison.OrdinalIgnoreCase) ||
-            protectedGroup.Contains("CN=", StringComparison.OrdinalIgnoreCase))
-        {
-            return string.Equals(groupDn, protectedGroup, StringComparison.OrdinalIgnoreCase);
-        }
-
-        // Extract the CN from the group DN for name-based comparisons
-        var cn = ExtractCnFromDn(groupDn);
-        if (cn == null)
-            return false;
-
-        // If protectedGroup is in DOMAIN\GroupName format, extract the name part
-        if (protectedGroup.Contains('\\'))
-        {
-            var parts = protectedGroup.Split('\\', 2);
-            if (parts.Length == 2)
-                return string.Equals(cn, parts[1], StringComparison.OrdinalIgnoreCase);
-        }
-
-        // Simple name comparison against extracted CN
-        return string.Equals(cn, protectedGroup, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

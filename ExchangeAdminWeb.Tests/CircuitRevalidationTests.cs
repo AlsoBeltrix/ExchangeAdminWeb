@@ -283,7 +283,7 @@ public class CircuitRevalidationTests
         h.Grant("MailboxPermissions", SectionGroupSid, @"CONTOSO\NotMigrated", "S-1-1-0");
         h.Directory.TranslateGroupName(NamedAdminGroup).Returns("S-1-5-32-545");
 
-        var consulted = h.Inventory().GetConsultedSids();
+        var consulted = h.Inventory().Read().Grants.Select(grant => grant.Sid).Distinct(StringComparer.OrdinalIgnoreCase);
 
         // A name nothing migrated, a well-known SID, and a name that translates to a BUILTIN
         // group are none of them a directory group this check can re-derive.
@@ -1763,7 +1763,7 @@ public class CircuitRevalidationTests
 
         public void Grant(string section, params string[] groups)
         {
-            var all = SectionAccess.GetSectionAccess();
+            SectionAccess.TryGetSectionAccess(out var all, out _);
             all[section] = groups;
             SectionAccess.SaveSectionAccess(all);
         }

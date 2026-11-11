@@ -68,7 +68,7 @@ public sealed partial class Comms10kRefusalTests
     public async Task FailedResolveAuditsImmediatelyAndNeverCallsReplaceEvenWhenTheRunnerContinues(string failure)
     {
         using var fixture = new Fixture();
-        var service = Substitute.For<Comms10kService>(NullLogger<Comms10kService>.Instance, null!, null!, fixture.Config);
+        var service = Substitute.For<Comms10kService>(NullLogger<Comms10kService>.Instance, null!, null!);
         var resolved = CompleteResolution();
         var expectedReason = failure switch
         {
@@ -115,7 +115,7 @@ public sealed partial class Comms10kRefusalTests
     public async Task ReplaceWithoutAResolveRefusesWithOneAuditAndItsCompletionReason()
     {
         using var fixture = new Fixture();
-        var service = Substitute.For<Comms10kService>(NullLogger<Comms10kService>.Instance, null!, null!, fixture.Config);
+        var service = Substitute.For<Comms10kService>(NullLogger<Comms10kService>.Instance, null!, null!);
         var processor = fixture.Processor(service);
         var job = Job();
         const string reason = "Addresses were not resolved, so nothing was written.";
@@ -406,7 +406,7 @@ public sealed partial class Comms10kRefusalTests
             SetField(delinea, "_apiUsername", "test-api");
             SetField(delinea, "_apiKey", "test-key");
             var credentials = new ModuleCredentialService(moduleConfig, delinea, NullLogger<ModuleCredentialService>.Instance);
-            Service = new TestService(moduleConfig, credentials, Config);
+            Service = new TestService(moduleConfig, credentials);
         }
 
         public Comms10kReplaceProcessor Processor(Comms10kService service) =>
@@ -433,7 +433,7 @@ public sealed partial class Comms10kRefusalTests
 
         public Comms10kService ResolvingSubstitute()
         {
-            var service = Substitute.For<Comms10kService>(NullLogger<Comms10kService>.Instance, null!, null!, Config);
+            var service = Substitute.For<Comms10kService>(NullLogger<Comms10kService>.Instance, null!, null!);
             service.ResolveEmailsAsync(Arg.Any<List<string>>()).Returns(CompleteResolution());
             service.ExecuteReplaceAsync(Arg.Any<IReadOnlyList<Comms10kAddressResolver.ResolvedMember>>(), Arg.Any<string>(), Arg.Any<Func<string?>>())
                 .Returns(new Comms10kUpdateResult { Success = true, Outcome = Comms10kOutcome.Succeeded });
@@ -507,8 +507,8 @@ public sealed partial class Comms10kRefusalTests
         }
     }
 
-    private sealed class TestService(ModuleConfigService config, ModuleCredentialService credentials, IConfiguration settings)
-        : Comms10kService(NullLogger<Comms10kService>.Instance, config, credentials, settings)
+    private sealed class TestService(ModuleConfigService config, ModuleCredentialService credentials)
+        : Comms10kService(NullLogger<Comms10kService>.Instance, config, credentials)
     {
         public IReadOnlyList<Comms10kAddressResolver.Candidate> Candidates { get; set; } = [Candidate()];
         public string? PreparationFailure { get; set; }

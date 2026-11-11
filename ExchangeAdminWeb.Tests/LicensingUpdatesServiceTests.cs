@@ -130,7 +130,7 @@ public class LicensingUpdatesServiceTests : IDisposable
         Assert.Contains("credentials unavailable", result.Error, StringComparison.OrdinalIgnoreCase);
     }
 
-    // --- CSV parsing (tested directly via internal ParseCsv) ---
+    // --- CSV parsing (tested directly via internal ParseCsvAsync) ---
 
     [Theory]
     [InlineData("User", true)]
@@ -140,12 +140,12 @@ public class LicensingUpdatesServiceTests : IDisposable
     [InlineData("Name", true)]
     [InlineData("john.doe@test.com", false)]
     [InlineData("jdoe", false)]
-    public void ParseCsv_HeaderDetection(string firstLine, bool isHeader)
+    public async Task ParseCsv_HeaderDetection(string firstLine, bool isHeader)
     {
         var csv = $"{firstLine}\nactual.user@test.com\n";
         using var stream = MakeCsvStream(csv);
 
-        var result = LicensingUpdatesService.ParseCsv(stream);
+        var result = await LicensingUpdatesService.ParseCsvAsync(stream);
 
         if (isHeader)
         {
@@ -160,12 +160,12 @@ public class LicensingUpdatesServiceTests : IDisposable
     }
 
     [Fact]
-    public void ParseCsv_MultipleColumns_UsesFirstColumnOnly()
+    public async Task ParseCsv_MultipleColumns_UsesFirstColumnOnly()
     {
         var csv = "user@test.com,extra data,more stuff\nanother@test.com,blah,blah\n";
         using var stream = MakeCsvStream(csv);
 
-        var result = LicensingUpdatesService.ParseCsv(stream);
+        var result = await LicensingUpdatesService.ParseCsvAsync(stream);
 
         Assert.Equal(2, result.Count);
         Assert.Equal("user@test.com", result[0]);
@@ -173,35 +173,35 @@ public class LicensingUpdatesServiceTests : IDisposable
     }
 
     [Fact]
-    public void ParseCsv_EmptyLines_AreSkipped()
+    public async Task ParseCsv_EmptyLines_AreSkipped()
     {
         var csv = "user1@test.com\n\n\nuser2@test.com\n  \n";
         using var stream = MakeCsvStream(csv);
 
-        var result = LicensingUpdatesService.ParseCsv(stream);
+        var result = await LicensingUpdatesService.ParseCsvAsync(stream);
 
         Assert.Equal(2, result.Count);
     }
 
     [Fact]
-    public void ParseCsv_QuotedFirstColumn_UnquotesValue()
+    public async Task ParseCsv_QuotedFirstColumn_UnquotesValue()
     {
         var csv = "\"user@test.com\",\"Other Col\"\n";
         using var stream = MakeCsvStream(csv);
 
-        var result = LicensingUpdatesService.ParseCsv(stream);
+        var result = await LicensingUpdatesService.ParseCsvAsync(stream);
 
         Assert.Single(result);
         Assert.Equal("user@test.com", result[0]);
     }
 
     [Fact]
-    public void ParseCsv_HeaderWithMail_IsDetected()
+    public async Task ParseCsv_HeaderWithMail_IsDetected()
     {
         var csv = "mail,department\nuser@test.com,IT\n";
         using var stream = MakeCsvStream(csv);
 
-        var result = LicensingUpdatesService.ParseCsv(stream);
+        var result = await LicensingUpdatesService.ParseCsvAsync(stream);
 
         Assert.Single(result);
         Assert.Equal("user@test.com", result[0]);

@@ -93,7 +93,6 @@ public class ModuleAdminServiceTests
         }, "test"));
 
         Assert.False(service.IsModuleAdmin("Migration", user));
-        Assert.False(service.IsModuleAdminForAny(user));
     }
 
     [Fact]
@@ -136,7 +135,6 @@ public class ModuleAdminServiceTests
         }, "test"));
 
         Assert.False(service.IsModuleAdmin("Migration", user));
-        Assert.False(service.IsModuleAdminForAny(user));
 
         // And the SID half of the same list still works, so this is not passing by accident.
         var granted = new ClaimsPrincipal(new ClaimsIdentity(new[]
@@ -147,7 +145,7 @@ public class ModuleAdminServiceTests
     }
 
     [Fact]
-    public void GetUnusableGrants_ReportsOnlyTheRowsThatAuthorizeNothing()
+    public void TryGetUnusableGrants_ReportsOnlyTheRowsThatAuthorizeNothing()
     {
         // This list exists so the refusal above is reportable BEFORE an admin discovers it by
         // losing access to their own module.
@@ -156,7 +154,7 @@ public class ModuleAdminServiceTests
         service.SetModuleAdmins("Migration", new[] { HomeOpsSid, "DOMAIN\\Legacy-Admins" });
         service.SetModuleAdmins("Comms10k", new[] { ForeignOpsSid });
 
-        var unusable = service.GetUnusableGrants();
+        Assert.True(service.TryGetUnusableGrants(out var unusable));
 
         Assert.Equal(new[] { "DOMAIN\\Legacy-Admins" }, unusable["Migration"]);
         Assert.DoesNotContain("Comms10k", unusable.Keys);
@@ -221,7 +219,6 @@ public class ModuleAdminServiceTests
 
         Assert.False(service.TryGetUnusableGrants(out var unusable));
         Assert.Empty(unusable);
-        Assert.Throws<InvalidOperationException>(() => service.GetUnusableGrants());
     }
 
     private static ModuleAdminService CreateService(string contentRoot, out ModuleAdminRepository repository)

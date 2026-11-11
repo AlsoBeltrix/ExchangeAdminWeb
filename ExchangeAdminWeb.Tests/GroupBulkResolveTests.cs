@@ -135,7 +135,7 @@ public class GroupBulkResolveTests : IDisposable
         var moduleCredentials = new ModuleCredentialService(moduleConfig, delinea, NullLogger<ModuleCredentialService>.Instance);
         var pp = new ProtectedPrincipalService(env, config, moduleConfig, TestConfigStore.CreateProtectedPrincipal(_tempDir), delinea, NullLogger<ProtectedPrincipalService>.Instance);
 
-        return new SeamedService(moduleConfig, moduleCredentials, pp, servicers, NullLogger<GroupManagementService>.Instance)
+        return new SeamedService(moduleCredentials, pp, servicers, NullLogger<GroupManagementService>.Instance)
         {
             Creds = creds,
             Query = query,
@@ -144,10 +144,10 @@ public class GroupBulkResolveTests : IDisposable
 
     private sealed class SeamedService : GroupManagementService
     {
-        public SeamedService(ModuleConfigService mc, ModuleCredentialService cred,
+        public SeamedService(ModuleCredentialService cred,
             ProtectedPrincipalService pp, ProtectedPrincipalServicerService servicers,
             Microsoft.Extensions.Logging.ILogger<GroupManagementService> logger)
-            : base(mc, cred, pp, servicers, logger)
+            : base(cred, pp, servicers, logger)
         { }
 
         public (string username, string password, string domain)? Creds { get; init; }

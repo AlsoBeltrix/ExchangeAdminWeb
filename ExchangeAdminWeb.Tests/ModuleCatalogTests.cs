@@ -525,11 +525,11 @@ public class ModuleCatalogTests
     public void Catalog_ConfigureAuthorizationPolicies_GeneratesExpectedPolicies()
     {
         var options = new AuthorizationOptions();
-        _catalog.ConfigureAuthorizationPolicies(options, new[] { "TestGroup" }, new[] { "AdminGroup" });
+        _catalog.ConfigureAuthorizationPolicies(options, new[] { "AdminGroup" });
 
         var expectedPolicies = new[]
         {
-            "GroupPolicy", "AdminSettings",
+            "AdminSettings",
             "MailboxPermissions", "MailboxPermissionsOnPrem",
             "CalendarPermissions", "CalendarPermissionsOnPrem",
             "MigrationCheck", "MigrationCreate", "MigrationManage",
@@ -551,7 +551,7 @@ public class ModuleCatalogTests
         // also NOT carry the legacy AllowedGroups group requirement (which would silently
         // resurrect the removed app-wide group gate on any undeclared endpoint).
         var options = new AuthorizationOptions();
-        _catalog.ConfigureAuthorizationPolicies(options, new[] { "TestGroup" }, new[] { "AdminGroup" });
+        _catalog.ConfigureAuthorizationPolicies(options, new[] { "AdminGroup" });
 
         var fallback = options.FallbackPolicy;
         Assert.NotNull(fallback);

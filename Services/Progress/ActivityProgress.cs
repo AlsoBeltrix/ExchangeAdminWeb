@@ -127,14 +127,6 @@ public interface IActivityHandle : IDisposable
     /// explicit Complete does not overwrite a real outcome with the dispose fallback.
     /// </summary>
     void Complete(bool success, string? message = null);
-
-    /// <summary>
-    /// An <see cref="IProgress{T}"/> view, for passing into a service method. Services must take
-    /// progress as an argument rather than injecting <see cref="IActivityProgress"/>, because most
-    /// module services are registered as singletons and would capture one circuit's sink for the
-    /// life of the process. See docs/GlobalProgressSystem-Plan.md section 5.1.
-    /// </summary>
-    IProgress<ActivityUpdate> AsProgress();
 }
 
 /// <summary>
@@ -156,7 +148,7 @@ public interface IActivityHandle : IDisposable
 /// PER-CIRCUIT (scoped). It must never be injected into a singleton - see the lifetime rule in
 /// docs/GlobalProgressSystem-Plan.md section 5.1 and the tripwire in
 /// ExchangeAdminWeb.Tests/ActivityProgressLifetimeTests.cs. Pages own the handle and pass
-/// <see cref="IActivityHandle.AsProgress"/> and the cancellation token down into services.
+/// the cancellation token down into services.
 ///
 /// A service rather than page state for the reason recorded on <see cref="AdminPageDirtyState"/>:
 /// this repo has no bUnit harness, so anything left in markup cannot be tested at all.
@@ -420,9 +412,6 @@ public sealed class ActivityProgressService : IActivityProgress, IDisposable
 
             _owner.Finish(this, success, message);
         }
-
-        public IProgress<ActivityUpdate> AsProgress() =>
-            new Progress<ActivityUpdate>(u => Report(u.Done, u.Detail));
 
         /// <summary>
         /// Dispose without an explicit Complete records a failure, mirroring
