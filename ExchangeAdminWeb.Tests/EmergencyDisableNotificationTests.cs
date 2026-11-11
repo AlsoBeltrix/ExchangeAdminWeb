@@ -339,7 +339,6 @@ public class EmergencyDisableNotificationTests : IDisposable
             _email,
             delinea,
             httpClientFactory,
-            env,
             config,
             Substitute.For<ILogger<EmergencyDisableService>>());
     }

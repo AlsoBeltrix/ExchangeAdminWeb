@@ -187,7 +187,7 @@ public sealed class M365GroupManagementServicerTests : IDisposable
         var pp = new ProtectedFakePpService(env, config, moduleConfig, TestConfigStore.CreateProtectedPrincipal(_tempDir), delinea);
 
         return new M365GroupManagementService(
-            moduleConfig, delinea, httpClientFactory, trace, audit, pp, servicers,
+            moduleConfig, delinea, httpClientFactory, pp, servicers,
             NullLogger<M365GroupManagementService>.Instance)
         {
             GraphClientForTests = () => new GraphTokenClient("tenant", "client", "secret", new HttpClient(_graph, disposeHandler: false)),

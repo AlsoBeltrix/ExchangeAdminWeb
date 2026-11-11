@@ -145,7 +145,7 @@ public sealed class GroupManagerNoticeTests : IDisposable
 
     /// <summary>The service with its directory session and its credential replaced.</summary>
     private sealed class StandInGroups(Func<Runspace> open)
-        : GroupManagementService(null!, null!, null!, null!, NullLogger<GroupManagementService>.Instance)
+        : GroupManagementService(null!, null!, null!, NullLogger<GroupManagementService>.Instance)
     {
         internal override Runspace CreateDirectoryRunspace() => open();
 

@@ -37,7 +37,7 @@ public sealed class GroupManagementDirectoryFilterTests
     private static string Dn(string name) => $"CN={name},OU=Groups,DC=contoso,DC=test";
 
     private sealed class StandInGroups(Func<Runspace> open)
-        : GroupManagementService(null!, null!, null!, null!, NullLogger<GroupManagementService>.Instance)
+        : GroupManagementService(null!, null!, null!, NullLogger<GroupManagementService>.Instance)
     {
         internal override Runspace CreateDirectoryRunspace() => open();
 

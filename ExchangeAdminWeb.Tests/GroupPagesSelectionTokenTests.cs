@@ -353,7 +353,7 @@ public sealed class GroupPagesSelectionTokenTests : IDisposable
     }
 
     private sealed class M365Groups() : M365GroupManagementService(
-        null!, null!, null!, null!, null!, null!, null!, NullLogger<M365GroupManagementService>.Instance)
+        null!, null!, null!, null!, null!, NullLogger<M365GroupManagementService>.Instance)
     {
         private readonly object _lock = new();
         private readonly List<string> _calls = [];
@@ -386,7 +386,7 @@ public sealed class GroupPagesSelectionTokenTests : IDisposable
         }
     }
 
-    private sealed class GmGroups() : GroupManagementService(null!, null!, null!, null!, NullLogger<GroupManagementService>.Instance)
+    private sealed class GmGroups() : GroupManagementService(null!, null!, null!, NullLogger<GroupManagementService>.Instance)
     {
         private readonly object _lock = new();
         private readonly List<string> _calls = [];

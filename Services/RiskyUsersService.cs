@@ -12,15 +12,13 @@ namespace ExchangeAdminWeb.Services;
 /// </summary>
 public sealed class RiskyUsersService
 {
-    private readonly ILogger<RiskyUsersService>? _logger;
     private readonly ModuleConfigService? _moduleConfig;
     private readonly DelineaService? _delineaService;
     private readonly IHttpClientFactory? _httpClientFactory;
     private readonly Func<Task<GraphTokenClient?>> _graphClientFactory;
 
-    public RiskyUsersService(ILogger<RiskyUsersService> logger, ModuleConfigService moduleConfig, DelineaService delineaService, IHttpClientFactory httpClientFactory)
+    public RiskyUsersService(ModuleConfigService moduleConfig, DelineaService delineaService, IHttpClientFactory httpClientFactory)
     {
-        _logger = logger;
         _moduleConfig = moduleConfig;
         _delineaService = delineaService;
         _httpClientFactory = httpClientFactory;

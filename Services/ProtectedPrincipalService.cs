@@ -205,7 +205,6 @@ public sealed record ProtectedGroupTargetEntry(string? ObjectGuid, string? Disti
 
 public class ProtectedPrincipalService : IVerifyDirectoryAccess
 {
-    private readonly IWebHostEnvironment _env;
     private readonly IConfiguration _config;
     private readonly ModuleConfigService _moduleConfig;
     private readonly ProtectedPrincipalRepository _repository;
@@ -355,7 +354,6 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
         IOnPremisesSidSource? onPremisesSidSource = null)
     {
         OnPremisesSidSource = onPremisesSidSource;
-        _env = env;
         _config = config;
         _moduleConfig = moduleConfig;
         _repository = repository;

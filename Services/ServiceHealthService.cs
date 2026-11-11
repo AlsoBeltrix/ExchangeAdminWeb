@@ -13,7 +13,6 @@ namespace ExchangeAdminWeb.Services;
 /// </summary>
 public sealed class ServiceHealthService
 {
-    private readonly ILogger<ServiceHealthService>? _logger;
     private readonly ModuleConfigService? _moduleConfig;
     private readonly DelineaService? _delineaService;
     private readonly IHttpClientFactory? _httpClientFactory;
@@ -28,9 +27,8 @@ public sealed class ServiceHealthService
     /// </summary>
     internal const int CacheTtlSeconds = 600;
 
-    public ServiceHealthService(ILogger<ServiceHealthService> logger, ModuleConfigService moduleConfig, DelineaService delineaService, IHttpClientFactory httpClientFactory)
+    public ServiceHealthService(ModuleConfigService moduleConfig, DelineaService delineaService, IHttpClientFactory httpClientFactory)
     {
-        _logger = logger;
         _moduleConfig = moduleConfig;
         _delineaService = delineaService;
         _httpClientFactory = httpClientFactory;

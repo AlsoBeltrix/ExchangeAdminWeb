@@ -122,7 +122,6 @@ public class EmergencyDisableService
     private readonly EmailService _email;
     private readonly DelineaService _delineaService;
     private readonly IHttpClientFactory _httpClientFactory;
-    private readonly IWebHostEnvironment _env;
     private readonly IConfiguration _config;
     private readonly ILogger<EmergencyDisableService> _logger;
 
@@ -141,7 +140,6 @@ public class EmergencyDisableService
         EmailService email,
         DelineaService delineaService,
         IHttpClientFactory httpClientFactory,
-        IWebHostEnvironment env,
         IConfiguration config,
         ILogger<EmergencyDisableService> logger)
     {
@@ -154,7 +152,6 @@ public class EmergencyDisableService
         _email = email;
         _delineaService = delineaService;
         _httpClientFactory = httpClientFactory;
-        _env = env;
         _config = config;
         _logger = logger;
     }

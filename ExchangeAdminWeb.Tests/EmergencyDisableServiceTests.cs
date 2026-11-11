@@ -914,7 +914,6 @@ public class EmergencyDisableServiceTests : IDisposable
             email,
             delinea,
             httpClientFactory,
-            env,
             config,
             Substitute.For<ILogger<EmergencyDisableService>>());
     }

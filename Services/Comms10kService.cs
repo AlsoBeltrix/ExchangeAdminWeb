@@ -12,17 +12,15 @@ public class Comms10kService
     private readonly ILogger<Comms10kService> _logger;
     private readonly ModuleConfigService _moduleConfig;
     private readonly ModuleCredentialService _moduleCredentials;
-    private readonly IConfiguration _config;
 
     /// <summary>Short pause between retry attempts of one directory write.</summary>
     private static readonly TimeSpan RetryBackoff = TimeSpan.FromSeconds(2);
 
-    public Comms10kService(ILogger<Comms10kService> logger, ModuleConfigService moduleConfig, ModuleCredentialService moduleCredentials, IConfiguration config)
+    public Comms10kService(ILogger<Comms10kService> logger, ModuleConfigService moduleConfig, ModuleCredentialService moduleCredentials)
     {
         _logger = logger;
         _moduleConfig = moduleConfig;
         _moduleCredentials = moduleCredentials;
-        _config = config;
     }
 
     private bool HasCredentialSecret => int.TryParse(_moduleConfig.GetValue("Comms10k", "DelineaSecretId"), out var id) && id > 0;

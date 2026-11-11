@@ -71,7 +71,7 @@ public class M365GroupManagementServiceTests : IDisposable
             sectionAccess, Substitute.For<ILogger<ProtectedPrincipalServicerService>>());
 
         return new M365GroupManagementService(
-            moduleConfig, delinea, httpClientFactory, operationTrace, audit, protectedPrincipals, servicers,
+            moduleConfig, delinea, httpClientFactory, protectedPrincipals, servicers,
             Substitute.For<ILogger<M365GroupManagementService>>())
         {
             GraphClientForTests = () => new GraphTokenClient("tenant", "client", "secret", new HttpClient(_graph, disposeHandler: false)),
