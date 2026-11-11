@@ -252,7 +252,7 @@ public sealed record ModuleConfigField(
 ```
 
 `ConfigFieldType` selects the Module Config control: `Text` (default),
-`AdGroup`/`AdUser`/`OU` (directory pickers), and `Boolean` (checkbox). A
+`AdGroup`/`OU` (directory pickers), and `Boolean` (checkbox). A
 true/false setting MUST declare `Boolean` - never `Text`. Boolean settings
 rendered as free text can be mistyped, and a mistyped security switch silently
 does the wrong thing (owner ruling 2026-09-01, "no compromise"; a catalog test

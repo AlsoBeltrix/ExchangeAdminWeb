@@ -9,7 +9,6 @@ public enum ConfigFieldType
     /// <see cref="ModuleConfigField.ListSeparator"/>) is typed as text, because picking would replace the whole list.
     /// </summary>
     AdGroup,
-    AdUser,
 
     /// <summary>The distinguished name of an organizational unit - an OU only, never another container.</summary>
     OU,

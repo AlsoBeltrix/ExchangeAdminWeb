@@ -146,7 +146,6 @@ function Test-IsAdministrator {
 
 function Read-Value {
     param(
-        [string]$Name,
         [string]$Prompt,
         [string]$CurrentValue,
         [string]$DefaultValue
@@ -818,19 +817,19 @@ $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")
 $defaultPublishPath = Join-Path $env:SystemDrive "inetpub\$AppAlias"
 $defaultLogRoot = Join-Path $env:ProgramData "ExchangeAdminWeb\Logs"
 
-$PublishPath = Read-Value "PublishPath" "Publish path" $PublishPath $defaultPublishPath
-$LogRoot = Read-Value "LogRoot" "Audit/log root" $LogRoot $defaultLogRoot
-$PathBase = Read-Value "PathBase" "Application path base" $PathBase "/$AppAlias"
-$ContactEmail = Read-Value "ContactEmail" "Support/contact email shown in the app" $ContactEmail ""
+$PublishPath = Read-Value "Publish path" $PublishPath $defaultPublishPath
+$LogRoot = Read-Value "Audit/log root" $LogRoot $defaultLogRoot
+$PathBase = Read-Value "Application path base" $PathBase "/$AppAlias"
+$ContactEmail = Read-Value "Support/contact email shown in the app" $ContactEmail ""
 # Absolute external URL of the app (e.g. https://server/ExchangeAdminWeb). Notification emails use
 # it to link to in-app pages; an email client cannot resolve a relative path. Blank is supported and
 # environment-neutral: the app omits the hyperlink and describes the page in prose instead.
-$PublicBaseUrl = Read-Value "PublicBaseUrl" "Absolute external URL of the app for email links (blank to configure later)" $PublicBaseUrl ""
-$AdminNotificationEmail = Read-Value "AdminNotificationEmail" "Admin notification email" $AdminNotificationEmail $ContactEmail
-$FromAddress = Read-Value "FromAddress" "Notification from address" $FromAddress $AdminNotificationEmail
-$DelineaUrl = Read-Value "DelineaUrl" "Delinea Secret Server URL (blank to configure later)" $DelineaUrl ""
-$OnPremExchangeServerUri = Read-Value "OnPremExchangeServerUri" "On-prem Exchange PowerShell URI (blank to configure later)" $OnPremExchangeServerUri ""
-$CertSubject = Read-Value "CertSubject" "EXO certificate subject (blank to configure later in Exchange Online module)" $CertSubject ""
+$PublicBaseUrl = Read-Value "Absolute external URL of the app for email links (blank to configure later)" $PublicBaseUrl ""
+$AdminNotificationEmail = Read-Value "Admin notification email" $AdminNotificationEmail $ContactEmail
+$FromAddress = Read-Value "Notification from address" $FromAddress $AdminNotificationEmail
+$DelineaUrl = Read-Value "Delinea Secret Server URL (blank to configure later)" $DelineaUrl ""
+$OnPremExchangeServerUri = Read-Value "On-prem Exchange PowerShell URI (blank to configure later)" $OnPremExchangeServerUri ""
+$CertSubject = Read-Value "EXO certificate subject (blank to configure later in Exchange Online module)" $CertSubject ""
 
 $AdminGroups = Read-StringArray "Admin AD groups (comma-separated, DOMAIN\GroupName)" $AdminGroups @()
 if (-not $AdminGroups -or $AdminGroups.Count -eq 0) {
