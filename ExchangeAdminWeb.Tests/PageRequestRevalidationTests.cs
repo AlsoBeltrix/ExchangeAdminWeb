@@ -1145,7 +1145,7 @@ public class PageRequestRevalidationTests
 
         public void Grant(string section, params string[] groups)
         {
-            var all = SectionAccess.GetSectionAccess();
+            SectionAccess.TryGetSectionAccess(out var all, out _);
             all[section] = groups;
             SectionAccess.SaveSectionAccess(all);
         }

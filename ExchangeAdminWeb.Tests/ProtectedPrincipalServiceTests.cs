@@ -479,25 +479,7 @@ public class ProtectedPrincipalServiceTests : IDisposable
         Assert.Equal(expected, result);
     }
 
-    // --- DN-based group matching ---
-
-    [Theory]
-    [InlineData("CN=Domain Admins,CN=Users,DC=ad,DC=analog,DC=com", "Domain Admins", true)]
-    [InlineData("CN=Domain Admins,CN=Users,DC=ad,DC=analog,DC=com", "domain admins", true)]
-    [InlineData("CN=Domain Admins,CN=Users,DC=ad,DC=analog,DC=com", "DOMAIN ADMINS", true)]
-    [InlineData("CN=Testers,OU=Groups,DC=ad,DC=analog,DC=com", "Test", false)] // Must not false-match substrings
-    [InlineData("CN=Domain Admins,CN=Users,DC=ad,DC=analog,DC=com", "CN=Domain Admins,CN=Users,DC=ad,DC=analog,DC=com", true)] // Full DN match
-    [InlineData("CN=Domain Admins,CN=Users,DC=ad,DC=analog,DC=com", "CN=Other Group,CN=Users,DC=ad,DC=analog,DC=com", false)]
-    [InlineData("CN=Domain Admins,CN=Users,DC=ad,DC=analog,DC=com", @"ANALOG\Domain Admins", true)] // DOMAIN\Name format
-    [InlineData("CN=Domain Admins,CN=Users,DC=ad,DC=analog,DC=com", @"CONTOSO\Domain Admins", true)] // Domain portion ignored, name matches
-    [InlineData("CN=Domain Admins,CN=Users,DC=ad,DC=analog,DC=com", @"ANALOG\Enterprise Admins", false)]
-    [InlineData("CN=Test Group,OU=Groups,DC=contoso,DC=com", "Test Group", true)]
-    [InlineData("CN=Test Group,OU=Groups,DC=contoso,DC=com", "Test", false)]
-    public void MatchesDnToProtectedGroup_MatchesCorrectly(string groupDn, string protectedGroup, bool expected)
-    {
-        var result = ProtectedPrincipalService.MatchesDnToProtectedGroup(groupDn, protectedGroup);
-        Assert.Equal(expected, result);
-    }
+    // --- DN parsing ---
 
     [Theory]
     [InlineData("CN=Domain Admins,CN=Users,DC=ad,DC=analog,DC=com", "Domain Admins")]

@@ -489,7 +489,7 @@ internal sealed class SettingsPageHarness : IDisposable
     }
 
     public string StoredModuleAdmins(string moduleId) =>
-        JsonSerializer.Serialize(new ModuleAdminRepository(Fresh()).GetForModule(moduleId));
+        JsonSerializer.Serialize(new ModuleAdminRepository(Fresh()).GetAll().GetValueOrDefault(moduleId, []));
 
     public string StoredProtectedPrincipals()
     {

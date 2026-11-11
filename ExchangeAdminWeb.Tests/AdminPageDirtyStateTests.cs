@@ -52,7 +52,7 @@ public class AdminPageDirtyStateTests
         Assert.Equal(1, s.DirtySectionCount);
         Assert.Equal(2, s.DirtyCount);
 
-        s.ClearSection("access");
+        s.SetCount("access", 0);
         Assert.False(s.IsDirty);
     }
 
@@ -149,7 +149,7 @@ public class AdminPageDirtyStateTests
         s.SetCount("Access", 3);
         s.SetCount("Configuration", 2);
 
-        s.ClearSection("Access");
+        s.SetCount("Access", 0);
 
         Assert.True(s.IsDirty);
         Assert.Equal(2, s.DirtyCount);
@@ -229,7 +229,7 @@ public class AdminPageDirtyStateTests
 
         var fired = 0;
         s.Changed += () => fired++;
-        s.ClearSection("Access");
+        s.SetCount("Access", 0);
 
         Assert.Equal(1, fired);
     }
@@ -241,7 +241,7 @@ public class AdminPageDirtyStateTests
         var fired = 0;
         s.Changed += () => fired++;
 
-        s.ClearSection("Access");
+        s.SetCount("Access", 0);
         s.Clear();
 
         Assert.Equal(0, fired);

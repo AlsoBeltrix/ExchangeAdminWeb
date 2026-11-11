@@ -15,6 +15,10 @@ public class AdSiteSubnetMapTests
 {
     private static AdSiteSubnetMap.Subnet Net(string cidr, string site) => new(cidr, site);
 
+    private static string FindSite(string? ipAddress, IReadOnlyList<AdSiteSubnetMap.Subnet> subnets) =>
+        AdSiteSubnetMap.FindSiteCancellable(
+            ipAddress, AdSiteSubnetMap.Prepare(subnets, CancellationToken.None), CancellationToken.None);
+
     [Fact]
     public void TheMostSpecificSubnetWinsRatherThanTheFirstOrTheBroadest()
     {
@@ -27,7 +31,7 @@ public class AdSiteSubnetMapTests
             Net("10.185.4.0/24", "London-Floor-3"),
         };
 
-        Assert.Equal("London-Floor-3", AdSiteSubnetMap.FindSite("10.185.4.17", subnets));
+        Assert.Equal("London-Floor-3", FindSite("10.185.4.17", subnets));
     }
 
     [Fact]
@@ -41,7 +45,7 @@ public class AdSiteSubnetMapTests
             Net("10.185.0.0/16", "EMEA-Summary"),
         };
 
-        Assert.Equal("London-Floor-3", AdSiteSubnetMap.FindSite("10.185.4.17", subnets));
+        Assert.Equal("London-Floor-3", FindSite("10.185.4.17", subnets));
     }
 
     [Fact]
@@ -58,7 +62,7 @@ public class AdSiteSubnetMapTests
             Net("10.185.4.0/24", "London-Floor-4"),
         };
 
-        Assert.Equal("London-Floor-3", AdSiteSubnetMap.FindSite("10.185.4.17", subnets));
+        Assert.Equal("London-Floor-3", FindSite("10.185.4.17", subnets));
     }
 
     [Fact]
@@ -68,7 +72,7 @@ public class AdSiteSubnetMapTests
         // tell it apart from a real one, and this is the module people act on physically.
         var subnets = new[] { Net("10.185.4.0/24", "London-Floor-3") };
 
-        Assert.Equal("", AdSiteSubnetMap.FindSite("192.168.1.5", subnets));
+        Assert.Equal("", FindSite("192.168.1.5", subnets));
     }
 
     [Fact]
@@ -83,7 +87,7 @@ public class AdSiteSubnetMapTests
             Net("10.185.4.0/24", ""),
         };
 
-        Assert.Equal("", AdSiteSubnetMap.FindSite("10.185.4.17", subnets));
+        Assert.Equal("", FindSite("10.185.4.17", subnets));
     }
 
     [Theory]
@@ -102,7 +106,7 @@ public class AdSiteSubnetMapTests
             Net("10.0.0.128/25", "London-B"),
         };
 
-        Assert.Equal(expected, AdSiteSubnetMap.FindSite(ip, subnets));
+        Assert.Equal(expected, FindSite(ip, subnets));
     }
 
     [Fact]
@@ -119,7 +123,7 @@ public class AdSiteSubnetMapTests
             Net("10.185.4.0/24", "London-Floor-3"),
         };
 
-        Assert.Equal("London-Floor-3", AdSiteSubnetMap.FindSite("10.185.4.17", subnets));
+        Assert.Equal("London-Floor-3", FindSite("10.185.4.17", subnets));
     }
 
     [Fact]
@@ -127,9 +131,9 @@ public class AdSiteSubnetMapTests
     {
         var subnets = new[] { Net("10.185.4.0/24", "London-Floor-3") };
 
-        Assert.Equal("", AdSiteSubnetMap.FindSite("", subnets));
-        Assert.Equal("", AdSiteSubnetMap.FindSite(null, subnets));
-        Assert.Equal("", AdSiteSubnetMap.FindSite("not-an-ip", subnets));
+        Assert.Equal("", FindSite("", subnets));
+        Assert.Equal("", FindSite(null, subnets));
+        Assert.Equal("", FindSite("not-an-ip", subnets));
     }
 
     [Fact]
@@ -140,9 +144,9 @@ public class AdSiteSubnetMapTests
         var v4 = new[] { Net("10.0.0.0/8", "London") };
         var v6 = new[] { Net("2001:db8::/32", "London-v6") };
 
-        Assert.Equal("", AdSiteSubnetMap.FindSite("2001:db8::1", v4));
-        Assert.Equal("", AdSiteSubnetMap.FindSite("10.0.0.1", v6));
-        Assert.Equal("London-v6", AdSiteSubnetMap.FindSite("2001:db8::1", v6));
+        Assert.Equal("", FindSite("2001:db8::1", v4));
+        Assert.Equal("", FindSite("10.0.0.1", v6));
+        Assert.Equal("London-v6", FindSite("2001:db8::1", v6));
     }
 
     [Fact]
@@ -150,7 +154,7 @@ public class AdSiteSubnetMapTests
     {
         // The directory read returning nothing is a real state - a forest with no subnet
         // objects configured - and it means "no site known", not "crash the report".
-        Assert.Equal("", AdSiteSubnetMap.FindSite("10.0.0.1", []));
+        Assert.Equal("", FindSite("10.0.0.1", []));
     }
 
     [Fact]
@@ -161,6 +165,6 @@ public class AdSiteSubnetMapTests
         // matching nothing and sending the device to a broader site.
         var subnets = new[] { Net("10.0.0.5/24", "London-Floor-3") };
 
-        Assert.Equal("London-Floor-3", AdSiteSubnetMap.FindSite("10.0.0.17", subnets));
+        Assert.Equal("London-Floor-3", FindSite("10.0.0.17", subnets));
     }
 }

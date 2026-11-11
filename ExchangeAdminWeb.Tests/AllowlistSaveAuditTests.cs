@@ -46,7 +46,9 @@ public sealed class AllowlistSaveAuditTests : IDisposable
     /// <summary>The stored rows, name-ordered, to show a refused save left them alone.</summary>
     private List<ExchangeAdminWeb.Services.Storage.AttributeRow> StoredRows()
     {
-        Assert.True(_h.Allowlist.TryReadAllowlist(out var rows, out _), "the allowlist store could not be read");
+        var snapshot = _h.Allowlist.ReadAllowlistSnapshot();
+        Assert.True(snapshot.Readable, "the allowlist store could not be read");
+        var rows = snapshot.Rows;
         return rows.OrderBy(r => r.Name, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
@@ -198,7 +200,7 @@ public sealed class AllowlistSaveAuditTests : IDisposable
         Assert.False(result.Success);
         Assert.True(result.StoreCorrupt);
         // Still corrupt: the save did not replace what the store holds.
-        Assert.True(_h.Service.IsAllowlistCorrupt());
+        Assert.Null(_h.Service.LoadAllowlistForEditing().Attributes);
         AssertRefusal(Assert.Single(_h.AuditEvents()), "AllowlistConfig", result.Error);
     }
 

@@ -47,7 +47,9 @@ public sealed class AllowlistConcurrentSaveTests : IDisposable
 
     private List<string> StoredNames()
     {
-        Assert.True(_h.Allowlist.TryReadAllowlist(out var rows, out _), "the allowlist store could not be read");
+        var snapshot = _h.Allowlist.ReadAllowlistSnapshot();
+        Assert.True(snapshot.Readable, "the allowlist store could not be read");
+        var rows = snapshot.Rows;
         return rows.Select(r => r.Name).Order(StringComparer.OrdinalIgnoreCase).ToList();
     }
 

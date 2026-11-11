@@ -53,12 +53,6 @@ public sealed partial class ADDirectorySearchService : IOperatorDirectory, IGrou
     }
 
     /// <summary>
-    /// Search Active Directory users matching the given term.
-    /// </summary>
-    public List<ADSearchResult> SearchUsers(string term, int maxResults = 25)
-        => Search(term, "User", maxResults);
-
-    /// <summary>
     /// Search Active Directory groups matching the given term.
     /// </summary>
     public List<ADSearchResult> SearchGroups(string term, int maxResults = 25)

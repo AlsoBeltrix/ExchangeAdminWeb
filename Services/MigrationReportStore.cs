@@ -205,17 +205,6 @@ public sealed class MigrationReportStore
     }
 
     /// <summary>
-    /// Deletes every stored report, for every batch and every operator.
-    /// </summary>
-    /// <remarks>
-    /// Audit finding A31: this is almost never what a caller wants. The store is one shared
-    /// directory, so this reaches other operators' reports as well as the caller's. Invalidating
-    /// after a batch's rows were replaced wants <see cref="DeleteForBatch"/>; this is for
-    /// wiping the store outright.
-    /// </remarks>
-    public void DeleteAll() => SweepInternal(_ => true);
-
-    /// <summary>
     /// Deletes the stored reports belonging to one batch, and leaves every other batch's alone.
     /// Returns how many were removed.
     /// </summary>
@@ -231,7 +220,7 @@ public sealed class MigrationReportStore
     public int DeleteForBatch(string batchName)
     {
         // Fail closed on a missing name rather than sweeping everything: an empty predicate
-        // argument must never widen into DeleteAll by accident, which is the defect restated.
+        // argument must never widen into deleting every report by accident, which is the defect restated.
         if (string.IsNullOrWhiteSpace(batchName))
         {
             _logger?.LogWarning("Refusing to discard migration reports for a blank batch name");

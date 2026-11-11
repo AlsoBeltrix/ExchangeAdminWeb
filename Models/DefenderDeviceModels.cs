@@ -117,7 +117,7 @@ public sealed class DefenderDevice
     /// the device was in when it was last seen, not where it is now.
     ///
     /// Empty means no subnet in the forest contains that address, or the subnet that does has
-    /// no site linked. It is NEVER a nearest match: see AdSiteSubnetMap.FindSite.
+    /// no site linked. It is NEVER a nearest match: see AdSiteSubnetMap.FindSiteCancellable.
     /// </remarks>
     public string Site { get; set; } = "";
 

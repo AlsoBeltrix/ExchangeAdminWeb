@@ -94,9 +94,6 @@ public sealed class AdminPageDirtyState
             Changed?.Invoke();
     }
 
-    /// <summary>Marks one section clean, after that section saved successfully.</summary>
-    public void ClearSection(string section) => SetCount(section, 0);
-
     /// <summary>Marks everything clean, after a successful save-all or a discard.</summary>
     public void Clear()
     {

@@ -23,30 +23,6 @@ public sealed class AttributeEditorRepository
     /// <summary>A change watcher over this repository's store, for the caching reader that sits on it.</summary>
     public ConfigChangeWatcher CreateChangeWatcher(ILogger? logger = null) => new(_store, logger);
 
-    /// <summary>
-    /// Reads the raw allowlist rows and the configured flag in one guarded operation. Returns
-    /// false if the read throws (DB-integrity failure -> the service treats it as corrupt/null).
-    /// </summary>
-    public bool TryReadAllowlist(out List<AttributeRow> rows, out bool configured)
-    {
-        try
-        {
-            (rows, configured) = _store.Read(connection =>
-            {
-                var data = ReadAllowlistRows(connection);
-                var present = ReadAllowlistConfigured(connection);
-                return (data, present);
-            });
-            return true;
-        }
-        catch
-        {
-            rows = new List<AttributeRow>();
-            configured = false;
-            return false;
-        }
-    }
-
     /// <summary>True if the allowlist has been configured (marker set). Used by the importer.</summary>
     public bool TryReadAllowlistConfigured()
     {

@@ -13,18 +13,6 @@ public sealed class ModuleAdminRepository
 
     public ModuleAdminRepository(IConfigStore store) => _store = store;
 
-    /// <summary>Returns the admin groups for one module (empty if none).</summary>
-    public string[] GetForModule(string moduleId)
-    {
-        return _store.Read(connection =>
-        {
-            using var command = connection.CreateCommand();
-            command.CommandText = "SELECT admin_group FROM module_admins WHERE module_id = $id;";
-            command.Parameters.AddWithValue("$id", moduleId);
-            return ReadGroups(command);
-        });
-    }
-
     /// <summary>Returns the full map of module_id -> admin groups (only modules with rows).</summary>
     public Dictionary<string, string[]> GetAll() => _store.Read(connection => ReadAll(connection, null));
 

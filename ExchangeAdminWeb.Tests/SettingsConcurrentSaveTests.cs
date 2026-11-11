@@ -152,7 +152,7 @@ public sealed class SettingsConcurrentSaveTests : IDisposable
     private void OtherInstanceGrants(string alias, params string[] groups)
     {
         var other = _h.CreateOtherSectionAccess();
-        var all = other.GetSectionAccess();
+        other.TryGetSectionAccess(out var all, out _);
         all[alias] = groups;
         other.SaveSectionAccess(all);
     }

@@ -913,7 +913,6 @@ internal sealed class MigrationStubExchange : IDisposable
 
         public void Complete(bool success, string? message = null) => Outcome ??= (success, message);
 
-        public IProgress<ActivityUpdate> AsProgress() => new Progress<ActivityUpdate>(_ => { });
 
         public void Dispose() => Complete(false, "This did not finish.");
     }

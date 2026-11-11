@@ -129,7 +129,7 @@ public sealed class AdSiteDirectory
 
             // An unlinked subnet is KEPT with an empty site, never skipped. Skipping it would
             // let a broader subnet claim the device and name a site it is not in - see
-            // AdSiteSubnetMap.FindSite's remarks. 16 of this forest's 531 were unlinked when
+            // AdSiteSubnetMap.FindSiteCancellable's remarks. 16 of this forest's 531 were unlinked when
             // last measured.
             result.Add(new AdSiteSubnetMap.Subnet(cidr, SiteNameFromDn(row.Text("siteObject"))));
         }

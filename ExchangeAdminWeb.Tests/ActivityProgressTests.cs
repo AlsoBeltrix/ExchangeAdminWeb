@@ -231,26 +231,6 @@ public class ActivityProgressTests
     }
 
     [Fact]
-    public void TheProgressBridgeReportsThroughToTheActivity()
-    {
-        using var progress = new ActivityProgressService();
-        using var handle = progress.Begin("Comms10k", "Writing members", ActivitySize.Items(200));
-
-        // This is the shape a page passes into a singleton service, since the service may not
-        // take IActivityProgress itself. Progress<T> marshals, so give it a moment to land.
-        IProgress<ActivityUpdate> sink = handle.AsProgress();
-        sink.Report(new ActivityUpdate(50, "batch 1"));
-
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (progress.Active[0].Done == 0 && DateTime.UtcNow < deadline)
-            Thread.Sleep(10);
-
-        var activity = Assert.Single(progress.Active);
-        Assert.Equal(50, activity.Done);
-        Assert.Equal("batch 1", activity.Detail);
-    }
-
-    [Fact]
     public void NothingIsRetainedAfterActivitiesEnd()
     {
         using var progress = new ActivityProgressService();

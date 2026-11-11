@@ -1092,45 +1092,6 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
         var record = Assert.Single(_h.AuditEvents());
         Assert.Equal(0, record.GetProperty("changedAttributes").GetArrayLength());
         Assert.False(record.GetProperty("mutationAttempted").GetBoolean());
-
-        // The preview, asked the same, finds the same.
-        var preview = await _h.Service.PreviewAsync(AttributeEditorHarness.PrincipalFor(jordan), new() { [attribute] = proposed });
-        Assert.True(preview.Success, preview.Error);
-        Assert.Empty(preview.Changes!);
-    }
-
-    [Fact]
-    public async Task ThePreview_ReReadsThroughTheSessionSeam_FromTheObjectsOwnDomain()
-    {
-        // The preview's re-read opened its own session, outside the seam the save uses, and sent no -Server, so it
-        // could ask another domain controller than the save would (aud-a26l routed the save's chain).
-        var alex = _h.Ad.AddAlex(title: "Analyst");
-
-        var preview = await _h.Service.PreviewAsync(AttributeEditorHarness.PrincipalFor(alex), new() { ["title"] = "Lead Analyst" });
-
-        Assert.True(preview.Success, preview.Error);
-        var change = Assert.Single(preview.Changes!);
-        Assert.Equal("title", change.Name);
-        Assert.Equal("Analyst", change.OldValue);
-        Assert.Equal("Lead Analyst", change.NewValue);
-        Assert.Equal(1, _h.Service.SessionsOpened);
-        Assert.Equal(["Import-Module|ActiveDirectory", $"Get-ADUser|{alex.Dn}|"], _h.Ad.Calls);
-        Assert.Equal("example.test", Assert.Single(_h.Ad.Reads).Server);
-        Assert.Empty(_h.Ad.Sets);
-        Assert.Empty(_h.AuditEvents());
-    }
-
-    [Fact]
-    public async Task ThePreviewOfADnThatNamesNoDomain_GoesToTheDefaultDomainController_AndSaysSo()
-    {
-        var robin = _h.Ad.Add("robin.hart@example.test", "CN=Robin Hart,OU=Staff,O=Example", "Robin Hart", ("title", "Analyst"));
-
-        var preview = await _h.Service.PreviewAsync(AttributeEditorHarness.PrincipalFor(robin), new() { ["title"] = "Lead Analyst" });
-
-        Assert.True(preview.Success, preview.Error);
-        Assert.Null(Assert.Single(_h.Ad.Reads).Server);
-        Assert.Contains(_h.Logger.Warnings, w => w.Contains(robin.Upn, StringComparison.Ordinal)
-            && w.Contains("default domain controller", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -1156,11 +1117,6 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
         Assert.Equal("Failed", Text(record, "result"));
         Assert.Equal(result.Error, Text(record, "error"));
         Assert.False(Assert.Single(_h.Notices).Success);
-
-        // The preview refuses it in the same words.
-        var preview = await _h.Service.PreviewAsync(AttributeEditorHarness.PrincipalFor(alex), new() { [Phones] = "555-0199" });
-        Assert.False(preview.Success);
-        Assert.Equal(result.Error, preview.Error);
     }
 
     [Fact]
@@ -1331,11 +1287,6 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
         Assert.Equal(result.Error, Text(record, "error"));
         Assert.False(Assert.Single(_h.Notices).Success);
 
-        // The preview refuses it in the same words.
-        var preview = await _h.Service.PreviewAsync(AttributeEditorHarness.PrincipalFor(alex), new() { [Photo] = "a caption" });
-        Assert.False(preview.Success);
-        Assert.Equal(result.Error, preview.Error);
-
         // Beside an attribute holding several values, each is named under its own rule.
         alex.Attributes[Phones] = "555-0100|555-0101";
         var both = await Save(alex, new() { [Photo] = "a caption", [Phones] = "555-0199" });
@@ -1407,10 +1358,6 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
         Assert.DoesNotContain("single-valued", result.Error, StringComparison.Ordinal);
         Assert.Empty(_h.Ad.Sets);
         Assert.Equal("two pictures", alex.Attributes[Photo]);
-
-        var preview = await _h.Service.PreviewAsync(AttributeEditorHarness.PrincipalFor(alex), new() { [Photo] = "a caption" });
-        Assert.False(preview.Success);
-        Assert.Equal(refusal, preview.Error);
 
         var lookup = await _h.Service.LookupAsync(alex.Upn);
         Assert.Equal(

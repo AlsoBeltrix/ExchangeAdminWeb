@@ -62,7 +62,7 @@ public sealed class SettingsModuleMoveTests : IDisposable
     private string DisplayName(string moduleId) => _h.Catalog.GetById(moduleId)!.DisplayName;
 
     private string[] StoredAdmins(string moduleId) =>
-        new ModuleAdminRepository(TestConfigStore.Create(_h.Root)).GetForModule(moduleId).Order(StringComparer.Ordinal).ToArray();
+        new ModuleAdminRepository(TestConfigStore.Create(_h.Root)).GetAll().GetValueOrDefault(moduleId, []).Order(StringComparer.Ordinal).ToArray();
 
     private string[] StoredAllowlist() =>
         new AttributeEditorRepository(TestConfigStore.Create(_h.Root)).ReadAllowlistSnapshot().Rows.Select(r => r.Name).ToArray();

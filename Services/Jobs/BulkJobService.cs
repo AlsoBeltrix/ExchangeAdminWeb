@@ -360,14 +360,6 @@ public sealed class BulkJobService
         _repository.GetActiveBySubmitter(submittedBy);
 
     /// <summary>
-    /// Recently finished jobs for one operator, newest first, so the frame can report an outcome
-    /// the operator has not seen yet. Same scoping reason as
-    /// <see cref="GetActiveJobsBySubmitter"/>.
-    /// </summary>
-    public IReadOnlyList<BulkJob> GetRecentJobsBySubmitter(string submittedBy) =>
-        _repository.GetRecentFinishedBySubmitter(submittedBy, _recentJobLimit);
-
-    /// <summary>
     /// Terminal jobs for one module, any job type, newest first. Uses the shared
     /// BulkJobs:RecentJobLimit, which is correct here because the limit now applies AFTER the
     /// module filter -- the window belongs to this module alone.

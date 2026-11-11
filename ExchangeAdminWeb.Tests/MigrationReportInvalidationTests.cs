@@ -25,8 +25,7 @@ public class MigrationReportInvalidationTests
     [Fact]
     public void ThePageNeverDiscardsEveryOperatorsReports()
     {
-        // DeleteAll is still on the store for a caller that genuinely wants to wipe it. The
-        // Migration page is not that caller, and was the only one.
+        // The store no longer has an instance-wide delete; the page must not grow a call to one.
         Assert.DoesNotContain("DeleteAll(", PageCode(), StringComparison.Ordinal);
     }
 

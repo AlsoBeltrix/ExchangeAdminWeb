@@ -177,12 +177,6 @@ public class SectionAccessService
             return VerifyLastEntry.SerializeMap(map);
         });
 
-    public Dictionary<string, string[]> GetSectionAccess()
-    {
-        var (data, _) = ReadSectionAccess();
-        return data;
-    }
-
     /// <summary>
     /// The section-access map the gates are reading now, and whether section access is configured
     /// at all (false: <see cref="GetGroupsForSection"/> answers sections that are not fail-closed with

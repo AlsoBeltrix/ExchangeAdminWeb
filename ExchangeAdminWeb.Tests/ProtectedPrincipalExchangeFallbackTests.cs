@@ -1017,21 +1017,4 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
                 Messages.Add(formatter(state, exception));
         }
     }
-
-    // ---- the legacy entry point is untouched --------------------------------
-
-    [Fact]
-    public async Task LegacyResolveDirectoryPrincipalAsync_DoesNotUseTheFallback()
-    {
-        // Callers still on the legacy wrapper must keep exactly today's behavior until slice 4
-        // switches them over.
-        var resolver = ResolverReturning(new ResolvedRecipient("vincent.roche@contoso.com", null, "UserMailbox", true));
-        var service = CreateService(resolver);
-        service.AdReturns("VRoche@o365.contoso.com", ResolutionStatus.NotFound);
-
-        var result = await service.ResolveDirectoryPrincipalAsync("VRoche@o365.contoso.com");
-
-        Assert.Null(result);
-        await resolver.DidNotReceive().ResolveRecipientAsync(Arg.Any<string>());
-    }
 }

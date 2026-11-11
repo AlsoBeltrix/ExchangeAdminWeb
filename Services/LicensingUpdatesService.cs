@@ -481,31 +481,6 @@ public class LicensingUpdatesService
     private static string PrincipalKey(ResolvedDirectoryPrincipal principal) =>
         principal.ObjectGuid ?? principal.DistinguishedName ?? principal.UserPrincipalName;
 
-    internal static List<string> ParseCsv(Stream csvStream)
-    {
-        var identities = new List<string>();
-        using var reader = new StreamReader(csvStream);
-        using var csv = CreateCsvReader(reader);
-        var isFirstRow = true;
-
-        while (csv.Read())
-        {
-            var firstCol = csv.GetField(0)?.Trim();
-            if (string.IsNullOrWhiteSpace(firstCol)) continue;
-
-            if (isFirstRow)
-            {
-                isFirstRow = false;
-                if (HeaderIndicators.Any(h => string.Equals(firstCol, h, StringComparison.OrdinalIgnoreCase)))
-                    continue;
-            }
-
-            identities.Add(firstCol);
-        }
-
-        return identities;
-    }
-
     internal static async Task<List<string>> ParseCsvAsync(Stream csvStream)
     {
         var identities = new List<string>();

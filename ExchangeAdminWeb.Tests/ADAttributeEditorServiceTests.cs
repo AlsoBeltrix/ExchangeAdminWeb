@@ -579,11 +579,11 @@ public class ADAttributeEditorServiceTests : IDisposable
         var service = CreateService();
 
         Assert.Null(service.GetAllowlist());
-        Assert.True(service.IsAllowlistCorrupt());
-        Assert.True(new ExchangeAdminWeb.Services.Storage.AttributeEditorRepository(_attrStore!)
-            .TryReadAllowlist(out var rows, out var configured));
-        Assert.Empty(rows);
-        Assert.False(configured);
+        Assert.Null(service.LoadAllowlistForEditing().Attributes);
+        var stored = new ExchangeAdminWeb.Services.Storage.AttributeEditorRepository(_attrStore!).ReadAllowlistSnapshot();
+        Assert.True(stored.Readable);
+        Assert.Empty(stored.Rows);
+        Assert.False(stored.Configured);
         // Left in place for an administrator to correct, and the log says which attribute.
         Assert.True(File.Exists(Path.Combine(_configDir, "ad-editable-attributes.json")));
         Assert.Contains(LoggedErrors(), e => e.Contains("Job Title", StringComparison.Ordinal));
@@ -604,7 +604,7 @@ public class ADAttributeEditorServiceTests : IDisposable
         var service = CreateService();
 
         Assert.Equal("^[A-Z]", Assert.Single(service.GetAllowlist()!).Pattern);
-        Assert.False(service.IsAllowlistCorrupt());
+        Assert.NotNull(service.LoadAllowlistForEditing().Attributes);
         Assert.False(File.Exists(Path.Combine(_configDir, "ad-editable-attributes.json")), "an imported file is archived");
         Assert.Null(service.LegacyAllowlistImportRefusal);
     }
@@ -678,7 +678,7 @@ public class ADAttributeEditorServiceTests : IDisposable
         var service = CreateService();
 
         Assert.Null(service.GetAllowlist());
-        Assert.True(service.IsAllowlistCorrupt());
+        Assert.Null(service.LoadAllowlistForEditing().Attributes);
         // File left in place for next-startup retry.
         Assert.True(File.Exists(Path.Combine(_configDir, "ad-editable-attributes.json")));
     }
@@ -705,7 +705,7 @@ public class ADAttributeEditorServiceTests : IDisposable
         service.InvalidateAllowlistCache();
 
         Assert.Null(service.GetAllowlist());
-        Assert.True(service.IsAllowlistCorrupt());
+        Assert.Null(service.LoadAllowlistForEditing().Attributes);
     }
 
     // Reads succeed but writes throw - simulates SQLite busy during the one-time import.
@@ -719,14 +719,14 @@ public class ADAttributeEditorServiceTests : IDisposable
         public void Write(Action<Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite.SqliteTransaction> write) => throw new InvalidOperationException("store busy");
     }
 
-    // --- Disk-fresh corruption gate (IsAllowlistCorrupt) ---
+    // --- Disk-fresh corruption read (LoadAllowlistForEditing) ---
 
     [Fact]
-    public void IsAllowlistCorrupt_ValidThenCorruptedWithinTtl_DetectsCorruptionWhileCacheStaysValid()
+    public void LoadAllowlistForEditing_ValidThenCorruptedWithinTtl_DetectsCorruptionWhileCacheStaysValid()
     {
         // The pre-save gate bug (GPT finding 1): GetAllowlist serves a valid list from the 30s
         // cache, so if the store became corrupt after a valid load, a cache-based gate would pass
-        // and let SaveAllowlist overwrite the corrupt store. IsAllowlistCorrupt must read fresh
+        // and let SaveAllowlist overwrite the corrupt store. LoadAllowlistForEditing must read fresh
         // and catch it. This test fails if the gate ever consults the cache instead of the store.
         var service = CreateService();
         SeedAllowlist(new ExchangeAdminWeb.Services.Storage.AttributeRow(
@@ -757,8 +757,8 @@ public class ADAttributeEditorServiceTests : IDisposable
         Assert.Single(stillCached!);
 
         // ...but the fresh gate must see the corruption and report it.
-        Assert.True(service.IsAllowlistCorrupt(),
-            "IsAllowlistCorrupt must read fresh and detect corruption the cache masks");
+        Assert.True(service.LoadAllowlistForEditing().Attributes is null,
+            "LoadAllowlistForEditing must read fresh and detect corruption the cache masks");
 
         // Once the throttle passes, the shared-DB watcher sees the write, drops the cache and
         // the reload fails closed (null) instead of serving the stale list.
@@ -804,11 +804,11 @@ public class ADAttributeEditorServiceTests : IDisposable
 
         Assert.False(result.Success);
         Assert.True(result.StoreCorrupt);
-        Assert.True(service.IsAllowlistCorrupt(), "the save replaced the corrupt store");
+        Assert.True(service.LoadAllowlistForEditing().Attributes is null, "the save replaced the corrupt store");
     }
 
     [Fact]
-    public void IsAllowlistCorrupt_ValidFile_ReturnsFalse()
+    public void LoadAllowlistForEditing_ValidFile_IsNotCorrupt()
     {
         WriteAllowlistConfig(new
         {
@@ -819,18 +819,18 @@ public class ADAttributeEditorServiceTests : IDisposable
         });
 
         var service = CreateService();
-        Assert.False(service.IsAllowlistCorrupt());
+        Assert.NotNull(service.LoadAllowlistForEditing().Attributes);
     }
 
     [Fact]
-    public void IsAllowlistCorrupt_NoFile_ReturnsFalse()
+    public void LoadAllowlistForEditing_NoFile_IsNotCorrupt()
     {
         // No config file is a valid "nothing allowlisted" state, not corruption.
         var configPath = Path.Combine(_configDir, "ad-editable-attributes.json");
         if (File.Exists(configPath)) File.Delete(configPath);
 
         var service = CreateService();
-        Assert.False(service.IsAllowlistCorrupt());
+        Assert.NotNull(service.LoadAllowlistForEditing().Attributes);
     }
 
     // --- DefaultSearchBase Enforcement (Conceptual) ---
