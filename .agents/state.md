@@ -8,6 +8,30 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 ### 2026-11-07 00:25 - weekend run paused: two blockers only the owner can clear
+### 2026-11-10 - phase 1 merged (4a2d01d2): 40 unwired items removed; phase 2 (retire the line-number pin) starting
+
+On master at 4a2d01d2, not pushed, not deployed. No version bump (deletions only); base stays 2.36.6. App code and
+scripts +70/-772; 21 tests deleted with their subjects (9073 -> 9052 xUnit). Master gates: 9052 xUnit, 19
+warnings, format/diff-check/ASCII clean; Pester result recorded in the token log.
+
+Ledger (plan section 8): A1-A24, A26-A28, A30-A39, A42, A44, A46 removed; A41 closed in phase 0; A29 kept
+(deliberate test seams, as planned). Three rows the agent declined and the supervisor accepted, each the owner's to
+overturn (plan rule 10): A25 `PermissionValidator.IsUserExcludedAsync` (a test of behaviour that stays can only be
+driven through it), A43 `ModulePermission.Name` (a catalog guard reads it), A45 route `/message-trace` (a bookmark
+would 404). A40 (eight legacy appsettings fallback keys) waits on the OWNER ACTION: check the deployed dev and prod
+`appsettings.json` for `Migration:HybridEndpoint`, `Migration:CloudTargetDeliveryDomain`,
+`Migration:OnPremTargetDeliveryDomain`, `Migration:CloudQuotaGB`, `Migration:ExcludedADGroups`,
+`Migration:OnPremTargetDatabases`, `Security:PreventSelfGrant`, `Security:ProtectedPrincipalDirectoryReadSecretId`.
+
+Follow-ups for phase 5.2 (comments and vacuous scans): removing A28 `IActivityHandle.AsProgress` left
+`ActivityUpdate` unused while `docs/GlobalProgressSystem-Plan.md:270` and the tripwire message at
+`GlobalProgressWiringTests.cs:58` still tell services to take `IProgress<ActivityUpdate>` - remove the type and
+that guidance; stale comments naming removed members (`EmergencyDisable.razor:356`,
+`ADDirectorySearchService.cs:623`, `ProtectedPrincipalEntryValidator.cs:196`,
+`ProtectedPrincipalEntryValidatorTests.cs:189`); vacuous source scans (`GlobalProgressWiringTests.cs:75`,
+`MigrationReportInvalidationTests.cs:30`, `MigrationStatusPageTests.cs:1978`). For the owner: his stash "wip:
+permissionvalidator seam" builds on a file phase 1 removed (A6) and may no longer apply.
+
 ### 2026-11-10 - phase 0 fixes all on master (27f53db7); phase 1 (delete unwired code) starting
 
 Slices 0.6 and 0.7 merged at 27f53db7, not pushed, not deployed. Base 2.36.6. Master gates: 9073 xUnit, 687

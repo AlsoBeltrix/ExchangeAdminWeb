@@ -1,6 +1,6 @@
 # One shared piece per shared behaviour; fix what the audit found; stop the slop at its sources
 
-Status: Approved 2026-11-10 (owner: "approved"); all phases 0 to 5 authorised 2026-11-10 (owner: "go for all phases. once all are done, I'll do a dev deployment."). No dev deploy between slices or phases. In progress: phase 0; slices 0.1 (adfb2a89), 0.2 (8b0fbb28), 0.3 (5896bae9), 0.3b, 0.4, 0.5 (4d2bf4cf), 0.6, 0.7 (27f53db7) merged - all phase 0 fixes are on master; phase 0 Gemini review pending the owner. Phase 1 in progress.
+Status: Approved 2026-11-10 (owner: "approved"); all phases 0 to 5 authorised 2026-11-10 (owner: "go for all phases. once all are done, I'll do a dev deployment."). No dev deploy between slices or phases. In progress: phase 0; slices 0.1 (adfb2a89), 0.2 (8b0fbb28), 0.3 (5896bae9), 0.3b, 0.4, 0.5 (4d2bf4cf), 0.6, 0.7 (27f53db7) merged - all phase 0 fixes are on master; phase 0 Gemini review pending the owner. Phase 1 merged at 4a2d01d2 (A40 waits on the owner). Phase 2 in progress.
 Owner: Michael
 Last verified against code: `7aa3dd19` / 2026-11-10
 Evidence: `.agents/review/slop-audit-report-2026-11-10.md` (combined report, two Gemini review rounds),
@@ -212,52 +212,52 @@ status `open`, `done <commit>`, or `declined <reason>`. Names are one line each;
 | G1b | Synced out-of-domain user with no Exchange recipient: protection rules not applied by the cloud-user modules | done, merged adfb2a89 |
 | G2 | M365 Groups gate: blank identity and NotFound proceed unchecked; remove checks a string and deletes an id | done, merged adfb2a89 |
 | G3 | Account Lockout: cheap refusals after directory work; `Executed` means "asked to execute" | done, merged 27f53db7 |
-| A1 | `TicketNumberInput.razor` | done on branch 143fd8b6 |
-| A2 | `AuthorizationCheck.razor` | done on branch 143fd8b6 |
-| A3 | `"GroupPolicy"` authorization policy | done on branch 143fd8b6 |
-| A4 | `PermissionType`, `PermissionAction` enums | done on branch d9aafcee |
-| A5 | `RoomTypeDefinition`, `CalendarPermissionEntry` | done on branch d9aafcee |
-| A6 | `IExoRecipientCommands`, `PooledExoCommands` | done on branch d9aafcee |
-| A7 | `NamedLocationsService.GetByIdAsync` | done on branch 57fe78b6 |
-| A8 | `BulkJobProcessorRegistry.IsRegistered` | done on branch 57fe78b6 |
-| A9 | `BulkJobService.IsStalled` | done on branch 57fe78b6 |
-| A10 | `AuthorizationGroupInventory.GetConsultedSids` | done on branch 285ef0ed |
-| A11 | `BulkJobService.GetRecentJobsBySubmitter` | done on branch 285ef0ed |
-| A12 | `ProtectedPrincipalService.MatchesDnToProtectedGroup` | done on branch 285ef0ed |
-| A13 | `ProtectedPrincipalService.ResolveDirectoryPrincipalAsync` | done on branch 285ef0ed |
-| A14 | `ADDirectorySearchService.SearchUsers` | done on branch 285ef0ed |
-| A15 | `MigrationReportStore.DeleteAll` | done on branch 285ef0ed |
-| A16 | `ModuleAdminService.GetUnusableGrants` | done on branch 285ef0ed |
-| A17 | `ModuleAdminService.IsModuleAdminForAny` | done on branch 285ef0ed |
-| A18 | `AdminPageDirtyState.ClearSection` | done on branch 285ef0ed |
-| A19 | `ModuleAdminRepository.GetForModule` | done on branch 285ef0ed |
-| A20 | `SectionAccessService.GetSectionAccess` | done on branch 285ef0ed |
-| A21 | `LicensingUpdatesService.ParseCsv` | done on branch 285ef0ed |
-| A22 | `AttributeEditorRepository.TryReadAllowlist` | done on branch 285ef0ed |
-| A23 | `ADAttributeEditorService.PreviewAsync` | done on branch 285ef0ed |
-| A24 | `AuditFirstMerge.Merge` | done on branch 285ef0ed |
-| A25 | `PermissionValidator.IsUserExcludedAsync` | declined - the validator change-token reload tests (`PermissionValidatorTests`, subject stays) can only be driven through it; `ValidateTargetMailboxAsync` polls the watcher inside its first call |
-| A26 | `ADAttributeEditorService.IsAllowlistCorrupt` | done on branch 285ef0ed |
-| A27 | `AdSiteSubnetMap.FindSite` | done on branch 285ef0ed |
-| A28 | `IActivityHandle.AsProgress` | done on branch 285ef0ed |
+| A1 | `TicketNumberInput.razor` | done, merged 4a2d01d2 |
+| A2 | `AuthorizationCheck.razor` | done, merged 4a2d01d2 |
+| A3 | `"GroupPolicy"` authorization policy | done, merged 4a2d01d2 |
+| A4 | `PermissionType`, `PermissionAction` enums | done, merged 4a2d01d2 |
+| A5 | `RoomTypeDefinition`, `CalendarPermissionEntry` | done, merged 4a2d01d2 |
+| A6 | `IExoRecipientCommands`, `PooledExoCommands` | done, merged 4a2d01d2 |
+| A7 | `NamedLocationsService.GetByIdAsync` | done, merged 4a2d01d2 |
+| A8 | `BulkJobProcessorRegistry.IsRegistered` | done, merged 4a2d01d2 |
+| A9 | `BulkJobService.IsStalled` | done, merged 4a2d01d2 |
+| A10 | `AuthorizationGroupInventory.GetConsultedSids` | done, merged 4a2d01d2 |
+| A11 | `BulkJobService.GetRecentJobsBySubmitter` | done, merged 4a2d01d2 |
+| A12 | `ProtectedPrincipalService.MatchesDnToProtectedGroup` | done, merged 4a2d01d2 |
+| A13 | `ProtectedPrincipalService.ResolveDirectoryPrincipalAsync` | done, merged 4a2d01d2 |
+| A14 | `ADDirectorySearchService.SearchUsers` | done, merged 4a2d01d2 |
+| A15 | `MigrationReportStore.DeleteAll` | done, merged 4a2d01d2 |
+| A16 | `ModuleAdminService.GetUnusableGrants` | done, merged 4a2d01d2 |
+| A17 | `ModuleAdminService.IsModuleAdminForAny` | done, merged 4a2d01d2 |
+| A18 | `AdminPageDirtyState.ClearSection` | done, merged 4a2d01d2 |
+| A19 | `ModuleAdminRepository.GetForModule` | done, merged 4a2d01d2 |
+| A20 | `SectionAccessService.GetSectionAccess` | done, merged 4a2d01d2 |
+| A21 | `LicensingUpdatesService.ParseCsv` | done, merged 4a2d01d2 |
+| A22 | `AttributeEditorRepository.TryReadAllowlist` | done, merged 4a2d01d2 |
+| A23 | `ADAttributeEditorService.PreviewAsync` | done, merged 4a2d01d2 |
+| A24 | `AuditFirstMerge.Merge` | done, merged 4a2d01d2 |
+| A25 | `PermissionValidator.IsUserExcludedAsync` | declined by the agent, accepted by the supervisor, owner may overturn - the validator change-token reload tests (`PermissionValidatorTests`, subject stays) can only be driven through it; `ValidateTargetMailboxAsync` polls the watcher inside its first call |
+| A26 | `ADAttributeEditorService.IsAllowlistCorrupt` | done, merged 4a2d01d2 |
+| A27 | `AdSiteSubnetMap.FindSite` | done, merged 4a2d01d2 |
+| A28 | `IActivityHandle.AsProgress` | done, merged 4a2d01d2 |
 | A29 | Test-seeding seams (five) | declined - deliberate test seam |
-| A30 | `Comms10kService._config` | done on branch 505e9d07 |
-| A31 | `EmergencyDisableService._env` | done on branch 505e9d07 |
-| A32 | `GroupManagementService._moduleConfig` | done on branch 505e9d07 |
-| A33 | `M365GroupManagementService._audit`, `_operationTrace` | done on branch 505e9d07 |
-| A34 | `ProtectedPrincipalService._env` | done on branch 505e9d07 (the `_env` field; the constructor parameter stays, the constructor reads it to find the legacy protected-principals file) |
-| A35 | `RiskyUsersService._logger` | done on branch 505e9d07 |
-| A36 | `ServiceHealthService._logger` | done on branch 505e9d07 |
-| A37 | `ADAttributeEditor.razor` unused `OperationTrace` inject | done on branch 505e9d07 |
-| A38 | `AdminEventLog.razor` unused `Config` inject | done on branch 505e9d07 |
-| A39 | `Home.razor` unused `AuthorizationService`, `Navigation` injects | done on branch 505e9d07 |
+| A30 | `Comms10kService._config` | done, merged 4a2d01d2 |
+| A31 | `EmergencyDisableService._env` | done, merged 4a2d01d2 |
+| A32 | `GroupManagementService._moduleConfig` | done, merged 4a2d01d2 |
+| A33 | `M365GroupManagementService._audit`, `_operationTrace` | done, merged 4a2d01d2 |
+| A34 | `ProtectedPrincipalService._env` | done, merged 4a2d01d2 |
+| A35 | `RiskyUsersService._logger` | done, merged 4a2d01d2 |
+| A36 | `ServiceHealthService._logger` | done, merged 4a2d01d2 |
+| A37 | `ADAttributeEditor.razor` unused `OperationTrace` inject | done, merged 4a2d01d2 |
+| A38 | `AdminEventLog.razor` unused `Config` inject | done, merged 4a2d01d2 |
+| A39 | `Home.razor` unused `AuthorizationService`, `Navigation` injects | done, merged 4a2d01d2 |
 | A40 | Legacy appsettings fallback keys (eight) | pending owner check of deployed appsettings |
 | A41 | `deploy.ps1 -HybridEndpoint` | done, merged 27f53db7 |
-| A42 | Unread PowerShell function parameters | done on branch 8f4dde10 |
-| A43 | `ModulePermission.Name` | declined - `ModuleCatalogTests` guard reads it (a description must not restate the permission name, `docs/AdminModuleSpec.md` Permission Model); removing it weakens a test whose subject stays |
-| A44 | `ConfigFieldType.AdUser` | done on branch 8f4dde10 |
-| A45 | Route `/message-trace` | declined - a route an administrator can still reach by bookmark or typed address; `docs/MessageTracePermissionSplit-Plan.md` (in progress) and `ModuleCatalogTests.cs:799` treat it as the legacy alias |
-| A46 | `tools/test-plan-bulk-csv.md` | done on branch 8f4dde10 |
+| A42 | Unread PowerShell function parameters | done, merged 4a2d01d2 |
+| A43 | `ModulePermission.Name` | declined by the agent, accepted by the supervisor, owner may overturn - `ModuleCatalogTests` guard reads it (a description must not restate the permission name, `docs/AdminModuleSpec.md` Permission Model); removing it weakens a test whose subject stays |
+| A44 | `ConfigFieldType.AdUser` | done, merged 4a2d01d2 |
+| A45 | Route `/message-trace` | declined by the agent, accepted by the supervisor, owner may overturn - a route an administrator can still reach by bookmark or typed address; `docs/MessageTracePermissionSplit-Plan.md` (in progress) and `ModuleCatalogTests.cs:799` treat it as the legacy alias |
+| A46 | `tools/test-plan-bulk-csv.md` | done, merged 4a2d01d2 |
 | B1 | Ticket box and its gate | open |
 | B2 | Audit rows: refusal shape and result values | open |
 | B3 | Protected-principal check for a cloud (Graph) user | done, merged adfb2a89 |
